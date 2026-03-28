@@ -14,7 +14,10 @@ local current_page = 1
 local selected_param = 1
 
 local pages = {
-  { name = "OSC", params = {
+  { name = "Oscillator", params = {
+      -- {id="mode",         disp="Voice Mode"},
+      -- {id="voiceSpread",  disp="Voice Spread"},
+      -- {id="glide",        disp="Glide"},
       {id="shape",        disp="Wave Shape"},
       {id="pwm",          disp="Pulse Width"},
       {id="formantRatio", disp="Formant Ratio"},
@@ -24,7 +27,7 @@ local pages = {
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
-  { me = "ENV", params = {
+  { me = "Envelope", params = {
       {id="atk",           disp="Attack"},
       {id="dec",           disp="Decay"},
       {id="sus",           disp="Sustain"},
@@ -57,7 +60,7 @@ local pages = {
       {id="velLfoShape",   disp="LFO -> OSC Wave Shape"}
     }
   },
-  { name = "MOD W", params = {
+  { name = "Modwheel", params = {
       {id="mwFormant",    disp=">Formant"},
       {id="mwOverlap",    disp=">Overlap"},
       {id="mwShape",      disp=">OSC Wave Shape"},
