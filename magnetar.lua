@@ -14,18 +14,62 @@ local current_page = 1
 local selected_param = 1
 
 local pages = {
-  { name = "OSC",   params = {"formantRatio", "formantFine", "overlap", "phaseOffset"} },
-  { name = "WAVE",  params = {"shape", "pwm", "panSpread"} },
-  { name = "ENV",   params = {"atk", "dec", "sus", "rel"} },
-  { name = "LFO A", params = {"lfoShape", "lfoRate", "modLfoFreq", "modLfoAmp"} },
-  { name = "LFO B", params = {"modLfoFormant", "modLfoOverlap", "modLfoShape", "modLfoPwm"} },
-  { name = "MOD E", params = {"modEnvFormant", "modEnvOverlap", "modEnvPhase", "modEnvShape", "modEnvPwm"} },
-  { name = "MOD V", params = {"velAmp", "modVelFormant", "modVelOverlap", "modVelShape", "velLfoFormant", "velLfoOverlap", "velLfoShape"} },
-  { name = "MOD W", params = {"mwFormant", "mwOverlap", "mwShape", "mwLfoFormant", "mwLfoOverlap", "mwLfoShape"} }
+  { name = "OSC", params = {
+      {id="shape",        disp="Wave Shape"},
+      {id="pwm",          disp="Pulse Width"},
+      {id="formantRatio", disp="Formant Ratio"},
+      {id="formantFine",  disp="Formant Fine"},
+      {id="overlap",      disp="Wavelet Overlap"},
+      {id="phaseOffset",  disp="Phase Offset"},
+      {id="panSpread",    disp="Stereo Spread"}
+    }
+  },
+  { me = "ENV", params = {
+      {id="atk",           disp="Attack"},
+      {id="dec",           disp="Decay"},
+      {id="sus",           disp="Sustain"},
+      {id="rel",           disp="Release"},
+      {id="modEnvFormant", disp="->Formant"},
+      {id="modEnvOverlap", disp="->OverLap"},
+      {id="modEnvPhase",   disp="->Phase Offset"},
+      {id="modEnvShape",   disp="->OSC Wave Shape"},
+      {id="modEnvPwm",     disp="->OSC Pulse Width"}
+    }
+  },
+  { name = "LFO", params = {
+      {id="lfoShape",      disp="Wave Shape"},
+      {id="lfoRate",       disp="Rate"},
+      {id="modLfoFreq",    disp="->Frequency"},
+      {id="modLfoAmp",     disp="->Amplitude"},
+      {id="modLfoFormant", disp="->Formant"},
+      {id="modLfoOverlap", disp="->Wavelet OverLap"},
+      {id="modLfoShape",   disp="->OSC Wave Shape"},
+      {id="modLfoPwm",     disp="->OSC Pulse Width"}
+    }
+  },
+  { name = "Velocity", params = {
+      {id="velAmp",        disp="->Amplitude"},
+      {id="modVelFormant", disp="->Formant"},
+      {id="modVelOverlap", disp="->Overlap"},
+      {id="modVelShape",   disp="->OSC Wave Shape"},
+      {id="velLfoFormant", disp="LFO -> Formant"},
+      {id="velLfoOverlap", disp="LFO -> Overlap"},
+      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"}
+    }
+  },
+  { name = "MOD W", params = {
+      {id="mwFormant",    disp=">Formant"},
+      {id="mwOverlap",    disp=">Overlap"},
+      {id="mwShape",      disp=">OSC Wave Shape"},
+      {id="mwLfoFormant", disp="LFO -> Formant"},
+      {id="mwLfoOverlap", disp="LFO -> Overlap"},
+      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"}
+    }
+  }
 }
 
-local ratio_values = {0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}
-local ratio_labels = {"0.25", "0.5", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
+local ratio_values = {0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}
+local ratio_labels = {"1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 
 function init()
   build_params()
@@ -87,14 +131,16 @@ function enc(n, delta)
     local page_len = #pages[current_page].params
     selected_param = util.clamp(selected_param + delta, 1, page_len)
   elseif n == 3 then
-    local p_id = pages[current_page].params[selected_param]
+    -- Notice the .id added here!
+    local p_id = pages[current_page].params[selected_param].id
     params:delta(p_id, delta)
   end
 end
 
 function key(n, z)
   if n == 3 and z == 1 then
-    local p_id = pages[current_page].params[selected_param]
+    -- And the .id added here!
+    local p_id = pages[current_page].params[selected_param].id
     params:set(p_id, params:get(p_id .. "_default") or params:lookup_param(p_id).default)
   end
 end
@@ -199,29 +245,37 @@ function redraw()
   screen.level(voices_active > 0 and 15 or 4)
   screen.text("V:" .. voices_active .. "/" .. MAX_VOICES)
 
-  local p_id = pages[current_page].params[selected_param]
-  local p_name = params:lookup_param(p_id).name
-
-  p_name = string.gsub(p_name, "Formant ", "Form ")
-  p_name = string.gsub(p_name, "Overlap", "OvrLp")
+  -- Get the current parameter's table data
+  local current_p = pages[current_page].params[selected_param]
+  local p_id = current_p.id
+  local p_name = current_p.disp
 
   screen.level(15)
   screen.move(40, 53)
   screen.text(">" .. p_name)
   screen.move(124, 53)
-  screen.text_right(params:string(p_id))
 
+  -- If it's the formant ratio, display the label, otherwise display the string
+  if p_id == "formantRatio" then
+    screen.text_right(ratio_labels[params:get(p_id)])
+  else
+    screen.text_right(params:string(p_id))
+  end
+
+  -- Show next param if available
   if selected_param < #pages[current_page].params then
-    local next_id = pages[current_page].params[selected_param + 1]
-    local next_name = params:lookup_param(next_id).name
-    next_name = string.gsub(next_name, "Formant ", "Form ")
-    next_name = string.gsub(next_name, "Overlap", "OvrLp")
+    local next_p = pages[current_page].params[selected_param + 1]
 
     screen.level(4)
     screen.move(45, 61)
-    screen.text(next_name)
+    screen.text(next_p.disp)
     screen.move(124, 61)
-    screen.text_right(params:string(next_id))
+
+    if next_p.id == "formantRatio" then
+      screen.text_right(ratio_labels[params:get(next_p.id)])
+    else
+      screen.text_right(params:string(next_p.id))
+    end
   end
 
   screen.update()
@@ -257,7 +311,6 @@ function build_params()
   add_eng_param("rel", "Release", 0.001, 5.0, 0.5)
 
   params:add_group("LFO Base", 3)
-  -- The new LFO Option dropdown!
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end) -- SC uses 0-index
   add_eng_param("lfoRate", "LFO Rate Hz", 0.1, 20.0, 5.0)
