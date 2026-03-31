@@ -27,7 +27,7 @@ local pages = {
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
-  { me = "Envelope", params = {
+  { name = "Envelope", params = {
       {id="atk",           disp="Attack"},
       {id="dec",           disp="Decay"},
       {id="sus",           disp="Sustain"},
@@ -292,12 +292,11 @@ function build_params()
     params:set_action(id, function(v) engine.setParam(id, v) end)
   end
 
-  params:add_group("Oscillator", 5)
+  params:add_group("Oscillator", 6)
   params:add_option("formantRatio", "Formant Ratio", ratio_labels, 4)
   params:set_action("formantRatio", function(v)
     engine.setParam("formantRatio", ratio_values[v])
   end)
-
   add_eng_param("formantFine", "Formant Fine", 0.25, 1.75, 1.0)
   add_eng_param("overlap", "Overlap (PulWM)", 0.01, 1.2, 0.0)
   add_eng_param("phaseOffset", "Phase Offset", 0.0, 6.28, 0.0)
@@ -313,7 +312,7 @@ function build_params()
   add_eng_param("sus", "Sustain", 0.0, 1.0, 0.4)
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
 
-  params:add_group("LFO Base", 3)
+  params:add_group("LFO Base", 4)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end) -- SC uses 0-index
   add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
