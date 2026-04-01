@@ -24,6 +24,9 @@ local pages = {
       {id="formantFine",  disp="Formant Fine"},
       {id="overlap",      disp="Wavelet Overlap"},
       {id="phaseOffset",  disp="Phase Offset"},
+      {id="fbAmt",        disp="Feedback Amount"},
+      {id="fbTime",       disp="Feedback Time"},
+      {id="fbDamp",       disp="Feedback Dampen"},
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
@@ -305,6 +308,14 @@ function build_params()
   params:add_group("Waveform Morph", 2)
   add_eng_param("shape", "Shape (Sin-Tri-Sq)", 0.0, 2.0, 0.0)
   add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
+
+  params:add_group("Granular Feedback", 3)
+  -- Amount can go up to 2.0 because the .tanh saturator will protect us
+  add_eng_param("fbAmt", "Feedback Amount", 0.0, 2.0, 0.0)
+  -- Delay time: 0.0001 creates high metallic pitches, 0.1 creates distinct grain echoes
+  add_eng_param("fbTime", "Feedback Time", 0.0001, 0.1, 0.01)
+  -- Dampening: 0.0 is completely bright, 0.99 is very muffled
+  add_eng_param("fbDamp", "Feedback Dampen", 0.0, 0.99, 0.5)
 
   params:add_group("Envelope", 4)
   add_eng_param("atk", "Attack", 0.001, 5.0, 0.01)

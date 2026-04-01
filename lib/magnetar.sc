@@ -18,6 +18,7 @@ Engine_Magnetar : CroneEngine {
             \lfoShape, 0, \lfoRate, 5.0, \panSpread, 0.0, \modWheel, 0.0,
             \formantRatio, 2.0, \formantFine, 1.0, \overlap, 0.5, \phaseOffset, 0.0,
             \shape, 0.0, \pwm, 0.5,
+            \fbAmt, 0.0, \fbTime, 0.01, \fbDamp, 0.5, // <-- NEW FEEDBACK DEFAULTS
             \modEnvFormant, 0.0, \modEnvOverlap, 0.0, \modEnvShape, 0.0, \modEnvPwm, 0.0,
             \modLfoFreq, 0.0, \modLfoFormant, 0.0, \modLfoOverlap, 0.0, \modLfoShape, 0.0, \modLfoPwm, 0.0, \modLfoAmp, 0.0,
             \modVelFormant, 0.0, \modVelOverlap, 0.0, \modVelShape, 0.0, \velAmp, 1.0,
@@ -32,6 +33,7 @@ Engine_Magnetar : CroneEngine {
                 lfoShape=0, lfoRate=5.0, panSpread=0.0, modWheel=0.0,
                 formantRatio=2.0, formantFine=1.0, overlap=0.5, phaseOffset=0.0,
                 shape=0.0, pwm=0.5,
+                fbAmt=0.0, fbTime=0.01, fbDamp=0.5, // <-- NEW FEEDBACK ARGS
                 modEnvFormant=0.0, modEnvOverlap=0.0, modEnvShape=0.0, modEnvPwm=0.0,
                 modLfoFreq=0.0, modLfoFormant=0.0, modLfoOverlap=0.0, modLfoShape=0.0, modLfoPwm=0.0, modLfoAmp=0.0,
                 modVelFormant=0.0, modVelOverlap=0.0, modVelShape=0.0, velAmp=1.0,
@@ -41,15 +43,13 @@ Engine_Magnetar : CroneEngine {
 
             var env = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
 
-            // --- The Multi-Wave LFO ---
+            // LFOs
             var lfoSine = SinOsc.kr(lfoRate);
             var lfoTri  = LFTri.kr(lfoRate);
-            var lfoSaw  = LFSaw.kr(lfoRate); // Bipolar: -1 to 1
-            var lfoSqr  = LFPulse.kr(lfoRate) * 2 - 1; // Converted to bipolar -1 to 1
-            var lfoSH   = LFNoise0.kr(lfoRate); // Sample & Hold (Stepped random)
-            var lfoNois = LFNoise2.kr(lfoRate); // Quadratic smoothed random noise
-
-            // Select the active LFO based on the parameter index (0 to 5)
+            var lfoSaw  = LFSaw.kr(lfoRate);
+            var lfoSqr  = LFPulse.kr(lfoRate) * 2 - 1;
+            var lfoSH   = LFNoise0.kr(lfoRate);
+            var lfoNois = LFNoise2.kr(lfoRate);
             var lfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois]);
 
             var pan = Rand(-1.0, 1.0) * panSpread;
@@ -58,21 +58,20 @@ Engine_Magnetar : CroneEngine {
             var effLfoOverlap = modLfoOverlap + (modWheel * mwLfoOverlap) + (vel * velLfoOverlap);
             var effLfoShape   = modLfoShape   + (modWheel * mwLfoShape)   + (vel * velLfoShape);
 
-            // --- Core Modulations ---
-            // 1. Modulate Fundamental Frequency (Vibrato/FM)
             var modFreq = freq * (1 + (modLfoFreq * lfo));
-
-            // 2. Formant, Overlap, Shape, and PWM Modulations
             var modFormant = modFreq * formantRatio * formantFine * (1 + (modEnvFormant * env) + (effLfoFormant * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
             var modOverlap = (overlap + (modEnvOverlap * env) + (effLfoOverlap * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
             var modShape = (shape + (modEnvShape * env) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
             var modPwm = (pwm + (modEnvPwm * env) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
+            // --- FEEDBACK LOOP INGEST ---
+            var fbIn = LocalIn.ar(1);
+            var fbFiltered = OnePole.ar(fbIn, fbDamp); // Dampen high frequencies
+            var fbDelayed = DelayC.ar(fbFiltered, 0.2, fbTime); // Create resonant peak
+
             // --- Pulsar Core ---
-            // Impulse train now follows modFreq!
             var trig = Impulse.ar(modFreq);
             var timer = Sweep.ar(trig);
-            // Window duration dynamically resizes based on the wobbling fundamental freq
             var windowDuration = modOverlap / modFreq;
             var envPhase = timer / windowDuration;
             var window = sin(envPhase * pi) * (envPhase < 1.0);
@@ -83,8 +82,17 @@ Engine_Magnetar : CroneEngine {
             var wTri = (4 * ((p + 0.25) % 1.0 - 0.5).abs) - 1;
             var wSqr = (p < modPwm) * 2 - 1;
 
-            var pulsaret = SelectX.ar(modShape, [wSin, wTri, wSqr]);
+            var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
+
+            // --- MIX FEEDBACK & SOFT CLIP ---
+            // We mix the base oscillator with the delayed output, then tanh to prevent explosion
+            var pulsaret = (baseOsc + (fbDelayed * fbAmt)).tanh;
+
+            // Apply the window to the mixed signal
             var snd = pulsaret * window;
+
+            // --- FEEDBACK LOOP SEND ---
+            LocalOut.ar(snd);
 
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
             snd = snd * amp * dynAmp * env * (1 + (modLfoAmp * lfo));
