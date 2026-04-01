@@ -90,25 +90,55 @@ local ratio_values = {0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 
 local ratio_labels = {"1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 
 function init_stars()
-  -- Exactly 1 Star per Voice (6 total)
-  for i=1, MAX_VOICES do
+  -- Helper function to ensure stars don't clump together
+  local function get_valid_pos()
+    local valid = false
+    local rx, ry
+    local attempts = 0
+    local min_dist = 9 -- Minimum pixels between any two stars
+
+    while not valid and attempts < 100 do
+      rx = math.random(50, 127)
+      ry = math.random(0, 64)
+      valid = true
+
+      -- Check distance against all existing stars
+      for _, star in ipairs(stars) do
+        local dx = rx - star.x
+        local dy = ry - star.y
+        local dist = math.sqrt((dx * dx) + (dy * dy))
+
+        if dist < min_dist then
+          valid = false
+          break
+        end
+      end
+      attempts = attempts + 1
+    end
+    return rx, ry
+  end
+
+  -- Exactly 12 Voice Stars (2 per voice slot)
+  for i=1, 12 do
+    local sx, sy = get_valid_pos()
     table.insert(stars, {
-      x = math.random(50, 127),
-      y = math.random(0, 64),
+      x = sx,
+      y = sy,
       type = 1,
-      v_idx = i
+      v_idx = (i % MAX_VOICES) + 1
     })
   end
 
-  -- Exactly 1 Star per LFO Threshold (5 total)
+  -- Exactly 10 LFO Stars (2 per threshold)
   local thresholds = {-1.0, -0.5, 0.0, 0.5, 1.0}
-  for i=1, #thresholds do
+  for i=1, 10 do
+    local sx, sy = get_valid_pos()
     table.insert(stars, {
-      x = math.random(50, 127),
-      y = math.random(0, 64),
+      x = sx,
+      y = sy,
       type = 2,
-      lfo_val = thresholds[i],
-      bright = 0 -- Memory variable for smooth phosphor decay
+      lfo_val = thresholds[(i % 5) + 1],
+      bright = 0
     })
   end
 end
@@ -238,30 +268,23 @@ function enc(n, delta)
     local target_page = current_page == 0 and menu_page or current_page
     local p_id = pages[target_page].params[selected_param].id
 
-    -- ==========================================
     -- CUSTOM VELOCITY SCALING FOR LFO RATE
-    -- ==========================================
     if p_id == "lfoRate" then
       local current = params:get("lfoRate")
       local step = 0
 
       if math.abs(delta) == 1 then
-        -- Slow turns: Ultra-fine adjustments
         if current < 1.0 then step = 0.01 * delta
         elseif current < 10.0 then step = 0.1 * delta
         else step = 1.0 * delta end
       else
-        -- Fast spins: Coarse jumps
         if current < 1.0 then step = 0.1 * delta
         elseif current < 10.0 then step = 1.0 * delta
         else step = 5.0 * delta end
       end
 
-      -- Apply the exact math and clamp it safely between 0.01 and 200
       params:set("lfoRate", util.clamp(current + step, 0.01, 200.0))
-
     else
-      -- Default behavior for all other parameters
       params:delta(p_id, delta)
     end
   end
@@ -276,8 +299,6 @@ function redraw()
   local current_p = pages[target_page].params[selected_param]
   local p_id = current_p.id
   local p_val_str = (p_id == "formantRatio") and ratio_labels[params:get(p_id)] or params:string(p_id)
-
-  -- Get the REAL, full name from the parameter registry
   local full_p_name = params:lookup_param(p_id).name
 
   if current_page == 0 then
@@ -292,10 +313,8 @@ function redraw()
 
     screen.level(15)
     screen.move(0, 26)
-    -- Displays the complete name without truncation
     screen.text(full_p_name)
 
-    -- Value is displayed directly beneath it
     screen.move(0, 36)
     screen.text(p_val_str)
 
@@ -310,12 +329,23 @@ function redraw()
     elseif lfo_shape_idx == 3 then lfo = (lfo_phase * 2) - 1
     elseif lfo_shape_idx == 4 then lfo = lfo_phase < 0.5 and 1 or -1
     elseif lfo_shape_idx == 5 then lfo = math.sin(math.floor(ui_time * lfo_rate) * 1337.1)
-    elseif lfo_shape_idx == 6 then lfo = (math.random() * 2 - 1) * 0.8 end
+    elseif lfo_shape_idx == 6 then
+      -- Smooth random walk representation
+      lfo = math.sin(ui_time * lfo_rate * 2.1) * math.cos(ui_time * lfo_rate * 1.3)
+    elseif lfo_shape_idx == 7 then
+      -- Pure White Noise (Unfiltered random per frame)
+      lfo = (math.random() * 2 - 1)
+    end
 
-    -- Apply Global Modwheel Scale (assuming wheel is 0 for visualizer)
     lfo = lfo * (1.0 - params:get("mwLfoGlobal"))
 
-    -- 3. Draw Background Starfield (Only active stars)
+    -- Internal Visual Blink LFO for Feedback Representation
+    local v_fb_time = util.clamp(params:get("fbTime"), 0.01, 0.5)
+    local v_blink_rate = 1.0 / v_fb_time
+    local v_blink_phase = (ui_time * v_blink_rate) % 1.0
+    local v_blink_lfo = v_blink_phase < 0.5 and 1 or -1
+
+    -- 3. Draw Background Starfield
     for _, star in ipairs(stars) do
       local display_bright = 0
 
@@ -325,33 +355,38 @@ function redraw()
         if note and anim_notes[note] then
           local base_env = anim_notes[note].env
           if anim_notes[note].state == "on" and base_env > 0.1 then
-            -- Note is held: subtract up to 40% brightness randomly for a twinkle effect
-            local twinkle = math.random() * 0.4
+            local blink_comp = (v_blink_lfo * params:get("fbAmt"))
+            -- Twinkle intensity is increased by fbAmt
+            local twinkle = math.random() * (0.2 + (params:get("fbAmt") * 0.3))
             display_bright = math.floor(base_env * (1.0 - twinkle) * 15)
           else
-            -- Note is releasing: fade smoothly without twinkling
             display_bright = math.floor(base_env * 15)
           end
         end
 
       elseif star.type == 2 then
-        -- LFO Linked Star (The Smooth Phosphor Glow)
+        -- LFO Linked Star (The SMOOTH Phosphor Glow)
         local dist = math.abs(lfo - star.lfo_val)
+        local target_bright = 0
 
-        -- If LFO is near the threshold, charge the star's internal brightness
-        if dist < 0.25 then
-          local target = 15 * (1.0 - (dist / 0.25))
-          if target > star.bright then
-            star.bright = target
-          end
+        -- Widen the detection window slightly to catch fast LFOs
+        if dist < 0.3 then
+          target_bright = 15 * (1.0 - (dist / 0.3))
         end
 
-        -- Smoothly decay the brightness every frame
-        star.bright = math.max(0, star.bright - 0.75)
+        -- Exponential Interpolation for ultra-smooth fading
+        if target_bright > star.bright then
+          -- Attack: Glides up quickly
+          star.bright = star.bright + ((target_bright - star.bright) * 0.6)
+        else
+          -- Decay: Multiplies by 0.85 every frame for a long, glowing tail
+          star.bright = star.bright * 0.85
+        end
+
+        if star.bright < 0.1 then star.bright = 0 end
         display_bright = math.floor(star.bright)
       end
 
-      -- Only draw if the star is actually producing light
       if display_bright > 0 then
         screen.level(util.clamp(display_bright, 0, 15))
         screen.pixel(star.x, star.y)
@@ -359,15 +394,12 @@ function redraw()
     end
 
     -- 4. Draw Magnetar Core & Plumes
-    -- Shifted further right to give the full text more room
     local cx, cy = 94, 32
     local spread = params:get("panSpread")
 
-    -- Thinned out Exhaust Plumes
     local plume_bright = math.max(0, math.floor(spread * 8))
     if plume_bright > 0 then
       screen.level(plume_bright)
-      -- Reduced from 8 lines to 3 lines, with a much tighter X spread
       for i=1, 3 do
         local pl = math.random() * 25 * spread
         local spread_offset = math.random(-1, 1)
@@ -496,9 +528,9 @@ function build_params()
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
 
   params:add_group("LFO Base", 5)
-  params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
+  params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "White"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 440.0, 0.8)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 450.0, 0.8)
   add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
   add_eng_param("mwLfoGlobal", "ModWheel -> LFO Scale", 0.0, 1.0, 0.0)
 
