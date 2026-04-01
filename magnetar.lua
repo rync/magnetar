@@ -27,6 +27,7 @@ local pages = {
       {id="fbAmt",        disp="Feedback Amount"},
       {id="fbTime",       disp="Feedback Time"},
       {id="fbDamp",       disp="Feedback Dampen"},
+      {id="fbTracking",   disp="Feedback Tracking"},
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
@@ -309,13 +310,18 @@ function build_params()
   add_eng_param("shape", "Shape (Sin-Tri-Sq)", 0.0, 2.0, 0.0)
   add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
 
-  params:add_group("Granular Feedback", 3)
+  params:add_group("Granular Feedback", 4)
   -- Amount can go up to 2.0 because the .tanh saturator will protect us
   add_eng_param("fbAmt", "Feedback Amount", 0.0, 2.0, 0.0)
   -- Delay time: 0.0001 creates high metallic pitches, 0.1 creates distinct grain echoes
   add_eng_param("fbTime", "Feedback Time", 0.0001, 0.1, 0.01)
   -- Dampening: 0.0 is completely bright, 0.99 is very muffled
   add_eng_param("fbDamp", "Feedback Dampen", 0.0, 0.99, 0.5)
+  -- Free allows for dynamic setting of Feedback Time
+  -- Time will be ignored if Fundamental (following the base pitch of the oscillator)
+  -- or Formant (tracking Formant Ration * Fundamental) are selected
+  params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
+  params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
   params:add_group("Envelope", 4)
   add_eng_param("atk", "Attack", 0.001, 5.0, 0.01)

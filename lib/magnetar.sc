@@ -33,7 +33,7 @@ Engine_Magnetar : CroneEngine {
                 lfoShape=0, lfoRate=5.0, panSpread=0.0, modWheel=0.0,
                 formantRatio=2.0, formantFine=1.0, overlap=0.5, phaseOffset=0.0,
                 shape=0.0, pwm=0.5,
-                fbAmt=0.0, fbTime=0.01, fbDamp=0.5, // <-- NEW FEEDBACK ARGS
+                fbAmt=0.0, fbTime=0.01, fbDamp=0.5, fbTrackMode=0, // <-- NEW PARAM
                 modEnvFormant=0.0, modEnvOverlap=0.0, modEnvShape=0.0, modEnvPwm=0.0,
                 modLfoFreq=0.0, modLfoFormant=0.0, modLfoOverlap=0.0, modLfoShape=0.0, modLfoPwm=0.0, modLfoAmp=0.0,
                 modVelFormant=0.0, modVelOverlap=0.0, modVelShape=0.0, velAmp=1.0,
@@ -43,7 +43,6 @@ Engine_Magnetar : CroneEngine {
 
             var env = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
 
-            // LFOs
             var lfoSine = SinOsc.kr(lfoRate);
             var lfoTri  = LFTri.kr(lfoRate);
             var lfoSaw  = LFSaw.kr(lfoRate);
@@ -64,10 +63,18 @@ Engine_Magnetar : CroneEngine {
             var modShape = (shape + (modEnvShape * env) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
             var modPwm = (pwm + (modEnvPwm * env) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
-            // --- FEEDBACK LOOP INGEST ---
+            // --- SMART FEEDBACK ROUTING ---
+            // Calculate the exact time required to delay by one pitch cycle
+            var trackFundTime = 1.0 / modFreq;
+            var trackFormTime = 1.0 / modFormant;
+
+            // 0: Free (uses fbTime knob), 1: Fundamental, 2: Formant
+            var actualFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
+
             var fbIn = LocalIn.ar(1);
-            var fbFiltered = OnePole.ar(fbIn, fbDamp); // Dampen high frequencies
-            var fbDelayed = DelayC.ar(fbFiltered, 0.2, fbTime); // Create resonant peak
+            var fbFiltered = OnePole.ar(fbIn, fbDamp);
+            // Max delay buffer set to 0.2s to save RAM, using actualFbTime
+            var fbDelayed = DelayC.ar(fbFiltered, 0.2, actualFbTime);
 
             // --- Pulsar Core ---
             var trig = Impulse.ar(modFreq);
@@ -84,14 +91,9 @@ Engine_Magnetar : CroneEngine {
 
             var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
 
-            // --- MIX FEEDBACK & SOFT CLIP ---
-            // We mix the base oscillator with the delayed output, then tanh to prevent explosion
             var pulsaret = (baseOsc + (fbDelayed * fbAmt)).tanh;
-
-            // Apply the window to the mixed signal
             var snd = pulsaret * window;
 
-            // --- FEEDBACK LOOP SEND ---
             LocalOut.ar(snd);
 
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
