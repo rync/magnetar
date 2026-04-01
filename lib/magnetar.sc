@@ -16,11 +16,10 @@ Engine_Magnetar : CroneEngine {
         [
             \amp, 0.5, \atk, 0.01, \dec, 0.2, \sus, 0.5, \rel, 0.5,
             \lfoShape, 0, \lfoRate, 5.0, \panSpread, 0.0, \modWheel, 0.0,
-            \mwLfoGlobal, 0.0, // <-- NEW: Global Modwheel to LFO scaling
+            \mwLfoGlobal, 0.0,
             \formantRatio, 2.0, \formantFine, 1.0, \overlap, 0.5, \phaseOffset, 0.0,
             \shape, 0.0, \pwm, 0.5,
             \fbAmt, 0.0, \fbTime, 0.01, \fbDamp, 0.5, \fbTrackMode, 0,
-            // <-- NEW: Feedback Modulations
             \modLfoFbTime, 0.0, \modLfoFbDamp, 0.0,
             \modVelFbTime, 0.0, \modVelFbDamp, 0.0,
             \mwFbTime, 0.0, \mwFbDamp, 0.0,
@@ -47,6 +46,7 @@ Engine_Magnetar : CroneEngine {
                 mwLfoFormant=0.0, mwLfoOverlap=0.0, mwLfoShape=0.0,
                 velLfoFormant=0.0, velLfoOverlap=0.0, velLfoShape=0.0;
 
+            // Notice how every single calculation is cleanly bundled as a 'var' declaration
             var env = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
 
             var lfoSine = SinOsc.kr(lfoRate);
@@ -56,9 +56,6 @@ Engine_Magnetar : CroneEngine {
             var lfoSH   = LFNoise0.kr(lfoRate);
             var lfoNois = LFNoise2.kr(lfoRate);
 
-            // --- GLOBAL MODWHEEL -> LFO SCALING ---
-            // If mwLfoGlobal is 1.0, LFO is dead until MW is pushed up.
-            // If mwLfoGlobal is 0.0, MW has no global effect on LFO amplitude.
             var rawLfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois]);
             var lfoScale = 1.0 - mwLfoGlobal + (modWheel * mwLfoGlobal);
             var lfo = rawLfo * lfoScale;
@@ -75,22 +72,7 @@ Engine_Magnetar : CroneEngine {
             var modShape = (shape + (modEnvShape * env) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
             var modPwm = (pwm + (modEnvPwm * env) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
-            // --- FEEDBACK MODULATIONS ---
-            var trackFundTime = 1.0 / modFreq;
-            var trackFormTime = 1.0 / modFormant;
-            var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
-
-            // Time is modulated multiplicatively (pitch bend style)
-            var modFbTime = (baseFbTime * (1 + (modLfoFbTime * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
-            // Dampen is modulated additively
-            var modFbDamp = (fbDamp + (modLfoFbDamp * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
-
-            var fbIn = LocalIn.ar(1);
-            var fbFiltered = OnePole.ar(fbIn, modFbDamp);
-            // Max buffer extended to 0.5s to handle deep modulation
-            var fbDelayed = DelayC.ar(fbFiltered, 0.5, modFbTime);
-
-            // --- Pulsar Core ---
+            // --- Pulsar Core (The Exciter) ---
             var trig = Impulse.ar(modFreq);
             var timer = Sweep.ar(trig);
             var windowDuration = modOverlap / modFreq;
@@ -103,15 +85,29 @@ Engine_Magnetar : CroneEngine {
             var wSqr = (p < modPwm) * 2 - 1;
 
             var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
+            var exciterGrain = baseOsc * window;
 
-            var pulsaret = (baseOsc + (fbDelayed * fbAmt)).tanh;
-            var snd = pulsaret * window;
+            // --- SMART FEEDBACK ROUTING ---
+            var trackFundTime = 1.0 / modFreq;
+            var trackFormTime = 1.0 / modFormant;
+            var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
 
-            LocalOut.ar(snd);
+            var modFbTime = (baseFbTime * (1 + (modLfoFbTime * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
+            var modFbDamp = (fbDamp + (modLfoFbDamp * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
+
+            // Calculate Decay Time for the Comb Filter based on your fbAmt
+            var ringTime = (fbAmt * 5.0).clip(0.0, 5.0);
+
+            // --- The Comb Resonator (C++ Optimized) ---
+            var combOut = CombL.ar(exciterGrain, 0.5, modFbTime, ringTime);
+            var filteredComb = OnePole.ar(combOut, modFbDamp);
+
+            var resonated = (exciterGrain + (filteredComb * fbAmt)).softclip;
 
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
-            snd = snd * amp * dynAmp * env * (1 + (modLfoAmp * lfo));
+            var snd = resonated * amp * dynAmp * env * (1 + (modLfoAmp * lfo));
 
+            // The single, absolute final action statement.
             Out.ar(out, Pan2.ar(snd, pan));
         }).add;
 
