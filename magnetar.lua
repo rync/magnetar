@@ -10,14 +10,18 @@ local note_order = {}
 local voices_active = 0
 local ui_time = 0
 
-local current_page = 1
+-- UI Navigation State
+local current_page = 0 -- 0 = Main Animation Page, 1+ = Full Parameter Menus
+local menu_page = 1    -- Tracks which parameter menu page is active in the background
 local selected_param = 1
+local k1_held = false
+
+-- Animation State
+local anim_notes = {}
+local stars = {} -- Holds our fixed background starfield positions
 
 local pages = {
   { name = "Oscillator", params = {
-      -- {id="mode",         disp="Voice Mode"},
-      -- {id="voiceSpread",  disp="Voice Spread"},
-      -- {id="glide",        disp="Glide"},
       {id="shape",        disp="Wave Shape"},
       {id="pwm",          disp="Pulse Width"},
       {id="formantRatio", disp="Formant Ratio"},
@@ -27,7 +31,7 @@ local pages = {
       {id="fbAmt",        disp="Feedback Amount"},
       {id="fbTime",       disp="Feedback Time"},
       {id="fbDamp",       disp="Feedback Dampen"},
-      {id="fbTrackMode",   disp="Feedback Tracking"},
+      {id="fbTrackMode",  disp="Feedback Tracking"},
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
@@ -46,7 +50,7 @@ local pages = {
   { name = "LFO", params = {
       {id="lfoShape",      disp="Wave Shape"},
       {id="lfoRate",       disp="Rate"},
-      {id="mwLfoGlobal",   disp="ModWheel LFO Depth"}, -- Global LFO Scale
+      {id="mwLfoGlobal",   disp="ModWheel LFO Depth"},
       {id="modLfoFreq",    disp="->Frequency"},
       {id="modLfoAmp",     disp="->Amplitude"},
       {id="modLfoFormant", disp="->Formant"},
@@ -65,8 +69,8 @@ local pages = {
       {id="velLfoFormant", disp="LFO -> Formant"},
       {id="velLfoOverlap", disp="LFO -> Overlap"},
       {id="velLfoShape",   disp="LFO -> OSC Wave Shape"},
-      {id="modVelFbTime", disp="->Feedback Time"},
-      {id="modVelFbDamp", disp="->Feedback Dampening"},
+      {id="modVelFbTime",  disp="->Feedback Time"},
+      {id="modVelFbDamp",  disp="->Feedback Dampening"},
     }
   },
   { name = "Modwheel", params = {
@@ -78,7 +82,6 @@ local pages = {
       {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"},
       {id="mwFbTime",     disp="->Feedback Time"},
       {id="mwFbDamp",     disp="->Feedback Dampening"}
-
     }
   }
 }
@@ -86,13 +89,55 @@ local pages = {
 local ratio_values = {0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}
 local ratio_labels = {"1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 
+function init_stars()
+  -- Exactly 1 Star per Voice (6 total)
+  for i=1, MAX_VOICES do
+    table.insert(stars, {
+      x = math.random(50, 127),
+      y = math.random(0, 64),
+      type = 1,
+      v_idx = i
+    })
+  end
+
+  -- Exactly 1 Star per LFO Threshold (5 total)
+  local thresholds = {-1.0, -0.5, 0.0, 0.5, 1.0}
+  for i=1, #thresholds do
+    table.insert(stars, {
+      x = math.random(50, 127),
+      y = math.random(0, 64),
+      type = 2,
+      lfo_val = thresholds[i],
+      bright = 0 -- Memory variable for smooth phosphor decay
+    })
+  end
+end
+
 function init()
   build_params()
+  init_stars()
   setup_midi()
+
   clock.run(function()
     while true do
       clock.sleep(1/15)
       ui_time = ui_time + (1/15)
+
+      -- Update visual animation envelopes
+      local atk_rate = 1.0 / math.max(0.01, params:get("atk") * 15)
+      local rel_rate = 1.0 / math.max(0.01, params:get("rel") * 15)
+
+      for note, data in pairs(anim_notes) do
+        if data.state == "on" then
+          data.env = math.min(1.0, data.env + atk_rate)
+        else
+          data.env = math.max(0.0, data.env - rel_rate)
+          if data.env <= 0.01 then
+            anim_notes[note] = nil -- Clean up dead notes
+          end
+        end
+      end
+
       redraw()
     end
   end)
@@ -115,18 +160,33 @@ function setup_midi()
         local oldest_note = table.remove(note_order, 1)
         engine.noteOff(oldest_note)
         active_notes[oldest_note] = nil
+        if anim_notes[oldest_note] then anim_notes[oldest_note].state = "off" end
         voices_active = voices_active - 1
       end
 
-      engine.noteOn(d.note, MusicUtil.note_num_to_freq(d.note), d.vel / 127)
+      local hz = MusicUtil.note_num_to_freq(d.note)
+      engine.noteOn(d.note, hz, d.vel / 127)
+
       active_notes[d.note] = true
       table.insert(note_order, d.note)
       voices_active = voices_active + 1
+
+      -- Register note for visual animation
+      anim_notes[d.note] = {
+        freq = hz,
+        vel = d.vel / 127,
+        env = 0.0,
+        state = "on",
+        angle = math.random() * math.pi * 2,
+        dist_offset = math.random(-3, 3)
+      }
 
     elseif d.type == "note_off" then
       if active_notes[d.note] then
         engine.noteOff(d.note)
         active_notes[d.note] = nil
+        if anim_notes[d.note] then anim_notes[d.note].state = "off" end
+
         for i, n in ipairs(note_order) do
           if n == d.note then table.remove(note_order, i); break end
         end
@@ -138,158 +198,254 @@ function setup_midi()
   end
 end
 
-function enc(n, delta)
-  if n == 1 then
-    current_page = util.clamp(current_page + delta, 1, #pages)
-    selected_param = 1
-  elseif n == 2 then
-    local page_len = #pages[current_page].params
-    selected_param = util.clamp(selected_param + delta, 1, page_len)
-  elseif n == 3 then
-    -- Notice the .id added here!
-    local p_id = pages[current_page].params[selected_param].id
-    params:delta(p_id, delta)
-  end
-end
-
+-- Controls
 function key(n, z)
+  if n == 1 then k1_held = (z == 1) end
+
   if n == 3 and z == 1 then
-    -- And the .id added here!
-    local p_id = pages[current_page].params[selected_param].id
+    local target_page = current_page == 0 and menu_page or current_page
+    local p_id = pages[target_page].params[selected_param].id
     params:set(p_id, params:get(p_id .. "_default") or params:lookup_param(p_id).default)
   end
 end
 
-local function morph_wave(p, shape, pwm)
-  local wSin = math.sin(p * 2 * math.pi)
-  local wTri = (4 * math.abs((p + 0.25) % 1.0 - 0.5)) - 1
-  local wSqr = (p < pwm) and 1 or -1
-  if shape < 1.0 then return wSin * (1.0 - shape) + wTri * shape
-  else return wTri * (2.0 - shape) + wSqr * (shape - 1.0) end
+function enc(n, delta)
+  if n == 1 then
+    if k1_held then
+      -- Toggle Main Page (0) vs Full Menu
+      if current_page == 0 then
+        current_page = menu_page
+      else
+        menu_page = current_page
+        current_page = 0
+      end
+    else
+      -- E1 Scrolls Pages in BOTH modes now
+      if current_page == 0 then
+        menu_page = util.clamp(menu_page + delta, 1, #pages)
+        selected_param = 1
+      else
+        current_page = util.clamp(current_page + delta, 1, #pages)
+        menu_page = current_page
+        selected_param = 1
+      end
+    end
+  elseif n == 2 then
+    local target_page = current_page == 0 and menu_page or current_page
+    local page_len = #pages[target_page].params
+    selected_param = util.clamp(selected_param + delta, 1, page_len)
+  elseif n == 3 then
+    local target_page = current_page == 0 and menu_page or current_page
+    local p_id = pages[target_page].params[selected_param].id
+
+    -- ==========================================
+    -- CUSTOM VELOCITY SCALING FOR LFO RATE
+    -- ==========================================
+    if p_id == "lfoRate" then
+      local current = params:get("lfoRate")
+      local step = 0
+
+      if math.abs(delta) == 1 then
+        -- Slow turns: Ultra-fine adjustments
+        if current < 1.0 then step = 0.01 * delta
+        elseif current < 10.0 then step = 0.1 * delta
+        else step = 1.0 * delta end
+      else
+        -- Fast spins: Coarse jumps
+        if current < 1.0 then step = 0.1 * delta
+        elseif current < 10.0 then step = 1.0 * delta
+        else step = 5.0 * delta end
+      end
+
+      -- Apply the exact math and clamp it safely between 0.01 and 200
+      params:set("lfoRate", util.clamp(current + step, 0.01, 200.0))
+
+    else
+      -- Default behavior for all other parameters
+      params:delta(p_id, delta)
+    end
+  end
 end
 
+-- Screen Rendering
 function redraw()
   screen.clear()
 
-  -- 1. ADVANCED VISUALIZER LFO SIMULATION
-  local lfo_rate = params:get("lfoRate")
-  local lfo_shape_idx = params:get("lfoShape")
-  local lfo_phase = (ui_time * lfo_rate) % 1.0
-  local lfo = 0
+  -- Common Data
+  local target_page = current_page == 0 and menu_page or current_page
+  local current_p = pages[target_page].params[selected_param]
+  local p_id = current_p.id
+  local p_val_str = (p_id == "formantRatio") and ratio_labels[params:get(p_id)] or params:string(p_id)
 
-  if lfo_shape_idx == 1 then     -- Sine
-    lfo = math.sin(lfo_phase * 2 * math.pi)
-  elseif lfo_shape_idx == 2 then -- Triangle
-    lfo = math.abs((lfo_phase * 4) - 2) - 1
-  elseif lfo_shape_idx == 3 then -- Saw
-    lfo = (lfo_phase * 2) - 1
-  elseif lfo_shape_idx == 4 then -- Square
-    lfo = lfo_phase < 0.5 and 1 or -1
-  elseif lfo_shape_idx == 5 then -- S&H (Stepped)
-    local step = math.floor(ui_time * lfo_rate)
-    -- Use a sine hash to generate deterministic pseudo-random steps
-    lfo = math.sin(step * 1337.1)
-  elseif lfo_shape_idx == 6 then -- Noise (Smoothed)
-    -- Simple random visual jitter
-    lfo = (math.random() * 2 - 1) * 0.8
-  end
+  -- Get the REAL, full name from the parameter registry
+  local full_p_name = params:lookup_param(p_id).name
 
-  -- We don't simulate modFreq visually because drawing changing screen widths
-  -- rapidly looks like a glitching screen rather than audio. We apply the rest.
-  local ratio_idx = params:get("formantRatio")
-  local actual_ratio = ratio_values[ratio_idx]
-  local v_formant = actual_ratio * params:get("formantFine") * (1 + (params:get("modLfoFormant") * lfo))
-  local v_overlap = util.clamp(params:get("overlap") + (params:get("modLfoOverlap") * lfo), 0.001, 1.0)
-  local v_shape   = util.clamp(params:get("shape") + (params:get("modLfoShape") * lfo), 0.0, 2.0)
-  local v_pwm     = util.clamp(params:get("pwm") + (params:get("modLfoPwm") * lfo), 0.01, 0.99)
-  local v_spread  = params:get("panSpread")
+  if current_page == 0 then
+    -- ==========================================
+    -- MAIN PAGE: UI LEFT, MAGNETAR RIGHT
+    -- ==========================================
 
-  -- 2. DRAW PARTICLE WAVEFORM
-  local center_y = 22
-  local amp = 18
+    -- 1. Left UI (Full Text Editing)
+    screen.level(4)
+    screen.move(0, 10)
+    screen.text(pages[target_page].name .. " [" .. selected_param .. "/" .. #pages[target_page].params .. "]")
 
-  local particles_per_voice = 50
-  local num_particles = voices_active * particles_per_voice
+    screen.level(15)
+    screen.move(0, 26)
+    -- Displays the complete name without truncation
+    screen.text(full_p_name)
 
-  if num_particles > 0 then
-    for i = 1, num_particles do
-      local x = math.random(0, 127)
-      local phase = x / 128
+    -- Value is displayed directly beneath it
+    screen.move(0, 36)
+    screen.text(p_val_str)
 
-      local window_phase = ((phase - 0.5) / v_overlap) + 0.5
-      local window = 0
-      if window_phase >= 0.0 and window_phase <= 1.0 then
-        window = math.sin(window_phase * math.pi)
+    -- 2. Calculate Live LFO
+    local lfo_rate = params:get("lfoRate")
+    local lfo_shape_idx = params:get("lfoShape")
+    local lfo_phase = (ui_time * lfo_rate) % 1.0
+    local lfo = 0
+
+    if lfo_shape_idx == 1 then lfo = math.sin(lfo_phase * 2 * math.pi)
+    elseif lfo_shape_idx == 2 then lfo = math.abs((lfo_phase * 4) - 2) - 1
+    elseif lfo_shape_idx == 3 then lfo = (lfo_phase * 2) - 1
+    elseif lfo_shape_idx == 4 then lfo = lfo_phase < 0.5 and 1 or -1
+    elseif lfo_shape_idx == 5 then lfo = math.sin(math.floor(ui_time * lfo_rate) * 1337.1)
+    elseif lfo_shape_idx == 6 then lfo = (math.random() * 2 - 1) * 0.8 end
+
+    -- Apply Global Modwheel Scale (assuming wheel is 0 for visualizer)
+    lfo = lfo * (1.0 - params:get("mwLfoGlobal"))
+
+    -- 3. Draw Background Starfield (Only active stars)
+    for _, star in ipairs(stars) do
+      local display_bright = 0
+
+      if star.type == 1 then
+        -- Voice Linked Star (The Twinkle)
+        local note = note_order[star.v_idx]
+        if note and anim_notes[note] then
+          local base_env = anim_notes[note].env
+          if anim_notes[note].state == "on" and base_env > 0.1 then
+            -- Note is held: subtract up to 40% brightness randomly for a twinkle effect
+            local twinkle = math.random() * 0.4
+            display_bright = math.floor(base_env * (1.0 - twinkle) * 15)
+          else
+            -- Note is releasing: fade smoothly without twinkling
+            display_bright = math.floor(base_env * 15)
+          end
+        end
+
+      elseif star.type == 2 then
+        -- LFO Linked Star (The Smooth Phosphor Glow)
+        local dist = math.abs(lfo - star.lfo_val)
+
+        -- If LFO is near the threshold, charge the star's internal brightness
+        if dist < 0.25 then
+          local target = 15 * (1.0 - (dist / 0.25))
+          if target > star.bright then
+            star.bright = target
+          end
+        end
+
+        -- Smoothly decay the brightness every frame
+        star.bright = math.max(0, star.bright - 0.75)
+        display_bright = math.floor(star.bright)
       end
 
-      local p = (phase * v_formant) % 1.0
-      local pulsaret = morph_wave(p, v_shape, v_pwm)
-
-      local y_val = pulsaret * window * amp
-      local scatter = (math.random() * 2 - 1) * v_spread * (amp * 0.8)
-
-      local brightness = math.floor(window * 15)
-      brightness = util.clamp(brightness - math.random(0, 3), 1, 15)
-
-      if window > 0.01 then
-        screen.level(brightness)
-        screen.pixel(x, center_y - y_val - scatter)
+      -- Only draw if the star is actually producing light
+      if display_bright > 0 then
+        screen.level(util.clamp(display_bright, 0, 15))
+        screen.pixel(star.x, star.y)
       end
     end
-  end
 
-  screen.level(voices_active > 0 and 4 or 1)
-  screen.move(0, center_y)
-  screen.line(128, center_y)
-  screen.stroke()
+    -- 4. Draw Magnetar Core & Plumes
+    -- Shifted further right to give the full text more room
+    local cx, cy = 94, 32
+    local spread = params:get("panSpread")
 
-  -- 3. DRAW PAGED UI
-  screen.level(0)
-  screen.rect(0, 44, 128, 20)
-  screen.fill()
+    -- Thinned out Exhaust Plumes
+    local plume_bright = math.max(0, math.floor(spread * 8))
+    if plume_bright > 0 then
+      screen.level(plume_bright)
+      -- Reduced from 8 lines to 3 lines, with a much tighter X spread
+      for i=1, 3 do
+        local pl = math.random() * 25 * spread
+        local spread_offset = math.random(-1, 1)
+        screen.move(cx + spread_offset, cy)
+        screen.line(cx + spread_offset, cy - 8 - pl)
+        screen.stroke()
+        screen.move(cx + spread_offset, cy)
+        screen.line(cx + spread_offset, cy + 8 + pl)
+        screen.stroke()
+      end
+    end
 
-  screen.level(15)
-  screen.rect(0, 44, 128, 20)
-  screen.stroke()
+    -- Core
+    screen.level(15)
+    screen.circle(cx, cy, 2 + math.floor(voices_active/2))
+    screen.fill()
 
-  screen.level(15)
-  screen.move(4, 53)
-  screen.text(pages[current_page].name)
+    -- 5. Draw Orbiting Voice Particles
+    local orbit_width = 8 + (ratio_values[params:get("formantRatio")] * 2)
+    local orbit_height = 2 + (params:get("overlap") * 15)
+    local orbit_tilt = params:get("shape") * (math.pi / 2.5)
 
-  screen.move(4, 61)
-  screen.level(voices_active > 0 and 15 or 4)
-  screen.text("V:" .. voices_active .. "/" .. MAX_VOICES)
+    for note, data in pairs(anim_notes) do
+      local speed = (data.freq / 300) + (lfo * params:get("modLfoFreq"))
+      data.angle = data.angle + speed * 0.1
 
-  -- Get the current parameter's table data
-  local current_p = pages[current_page].params[selected_param]
-  local p_id = current_p.id
-  local p_name = current_p.disp
+      local radius_x = orbit_width + data.dist_offset
+      local radius_y = orbit_height
+      local ox = math.cos(data.angle) * radius_x
+      local oy = math.sin(data.angle) * radius_y
 
-  screen.level(15)
-  screen.move(40, 53)
-  screen.text(">" .. p_name)
-  screen.move(124, 53)
+      local px = cx + (ox * math.cos(orbit_tilt) - oy * math.sin(orbit_tilt))
+      local py = cy + (ox * math.sin(orbit_tilt) + oy * math.cos(orbit_tilt))
 
-  -- If it's the formant ratio, display the label, otherwise display the string
-  if p_id == "formantRatio" then
-    screen.text_right(ratio_labels[params:get(p_id)])
+      local size = math.max(1, math.ceil(data.env * data.vel * 3))
+      local bright = math.max(1, math.floor(data.env * 15))
+
+      screen.level(bright)
+      screen.rect(math.floor(px), math.floor(py) - math.floor(size/2), size, size)
+      screen.fill()
+    end
+
   else
-    screen.text_right(params:string(p_id))
-  end
+    -- ==========================================
+    -- PARAMETER MENUS (FULL PAGE)
+    -- ==========================================
+    screen.level(15)
+    screen.move(0, 10)
+    screen.text(pages[current_page].name .. "   [V:" .. voices_active .. "]")
+    screen.move(0, 14)
+    screen.line(128, 14)
+    screen.stroke()
 
-  -- Show next param if available
-  if selected_param < #pages[current_page].params then
-    local next_p = pages[current_page].params[selected_param + 1]
+    local start_idx = math.max(1, selected_param - 4)
+    local end_idx = math.min(#pages[current_page].params, start_idx + 4)
 
-    screen.level(4)
-    screen.move(45, 61)
-    screen.text(next_p.disp)
-    screen.move(124, 61)
+    if end_idx - start_idx < 4 and #pages[current_page].params >= 5 then
+      start_idx = end_idx - 4
+    end
 
-    if next_p.id == "formantRatio" then
-      screen.text_right(ratio_labels[params:get(next_p.id)])
-    else
-      screen.text_right(params:string(next_p.id))
+    for i = start_idx, end_idx do
+      local p = pages[current_page].params[i]
+      local y = 26 + (i - start_idx) * 9
+
+      if i == selected_param then
+        screen.level(15)
+        screen.move(0, y)
+        screen.text(">")
+      else
+        screen.level(4)
+      end
+
+      screen.move(8, y)
+      screen.text(p.disp)
+
+      local v_str = (p.id == "formantRatio") and ratio_labels[params:get(p.id)] or params:string(p.id)
+      screen.move(128, y)
+      screen.text_right(v_str)
     end
   end
 
@@ -319,19 +475,12 @@ function build_params()
   add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
 
   params:add_group("Granular Feedback", 4)
-  -- Amount can go up to 2.0 because the .tanh saturator will protect us
   add_eng_param("fbAmt", "Feedback Amount", 0.0, 0.9999, 0.0)
-  -- Delay time: 0.0001 creates high metallic pitches, 0.1 creates distinct grain echoes
   add_eng_param("fbTime", "Feedback Time", 0.0001, 0.5, 0.01)
-  -- Dampening: 0.0 is completely bright, 0.99 is very muffled
   add_eng_param("fbDamp", "Feedback Dampen", 0.0, 0.99, 0.5)
-  -- Free allows for dynamic setting of Feedback Time
-  -- Time will be ignored if Fundamental (following the base pitch of the oscillator)
-  -- or Formant (tracking Formant Ration * Fundamental) are selected
   params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
   params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
-  -- Add this below your Feedback Base parameters
   params:add_group("Mod: Feedback", 6)
   add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
   add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
@@ -348,8 +497,8 @@ function build_params()
 
   params:add_group("LFO Base", 5)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
-  params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end) -- SC uses 0-index
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
+  params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 440.0, 0.8)
   add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
   add_eng_param("mwLfoGlobal", "ModWheel -> LFO Scale", 0.0, 1.0, 0.0)
 
