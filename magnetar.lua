@@ -4,7 +4,7 @@
 engine.name = 'Magnetar'
 local MusicUtil = require("musicutil")
 
-local MAX_VOICES = 8
+local MAX_VOICES = 6
 local active_notes = {}
 local note_order = {}
 local voices_active = 0
@@ -24,6 +24,10 @@ local pages = {
       {id="formantFine",  disp="Formant Fine"},
       {id="overlap",      disp="Wavelet Overlap"},
       {id="phaseOffset",  disp="Phase Offset"},
+      {id="fbAmt",        disp="Feedback Amount"},
+      {id="fbTime",       disp="Feedback Time"},
+      {id="fbDamp",       disp="Feedback Dampen"},
+      {id="fbTrackMode",   disp="Feedback Tracking"},
       {id="panSpread",    disp="Stereo Spread"}
     }
   },
@@ -42,12 +46,15 @@ local pages = {
   { name = "LFO", params = {
       {id="lfoShape",      disp="Wave Shape"},
       {id="lfoRate",       disp="Rate"},
+      {id="mwLfoGlobal",   disp="ModWheel LFO Depth"}, -- Global LFO Scale
       {id="modLfoFreq",    disp="->Frequency"},
       {id="modLfoAmp",     disp="->Amplitude"},
       {id="modLfoFormant", disp="->Formant"},
       {id="modLfoOverlap", disp="->Wavelet OverLap"},
-      {id="modLfoShape",   disp="->OSC Wave Shape"},
-      {id="modLfoPwm",     disp="->OSC Pulse Width"}
+      {id="modLfoShape",   disp="->Wave Shape"},
+      {id="modLfoPwm",     disp="->Pulse Width"},
+      {id="modLfoFbTime",  disp="->Feedback Time"},
+      {id="modLfoFbDamp",  disp="->Feedback Dampening"},
     }
   },
   { name = "Velocity", params = {
@@ -57,7 +64,9 @@ local pages = {
       {id="modVelShape",   disp="->OSC Wave Shape"},
       {id="velLfoFormant", disp="LFO -> Formant"},
       {id="velLfoOverlap", disp="LFO -> Overlap"},
-      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"}
+      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"},
+      {id="modVelFbTime", disp="->Feedback Time"},
+      {id="modVelFbDamp", disp="->Feedback Dampening"},
     }
   },
   { name = "Modwheel", params = {
@@ -66,7 +75,10 @@ local pages = {
       {id="mwShape",      disp=">OSC Wave Shape"},
       {id="mwLfoFormant", disp="LFO -> Formant"},
       {id="mwLfoOverlap", disp="LFO -> Overlap"},
-      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"}
+      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"},
+      {id="mwFbTime",     disp="->Feedback Time"},
+      {id="mwFbDamp",     disp="->Feedback Dampening"}
+
     }
   }
 }
@@ -298,7 +310,7 @@ function build_params()
     engine.setParam("formantRatio", ratio_values[v])
   end)
   add_eng_param("formantFine", "Formant Fine", 0.25, 1.75, 1.0)
-  add_eng_param("overlap", "Overlap (PulWM)", 0.01, 1.2, 0.0)
+  add_eng_param("overlap", "Overlap (PulWM)", 0.01, 1.6, 0.03)
   add_eng_param("phaseOffset", "Phase Offset", 0.0, 6.28, 0.0)
   add_eng_param("panSpread", "Stereo Spread", 0.0, 1.0, 0.0)
 
@@ -306,17 +318,40 @@ function build_params()
   add_eng_param("shape", "Shape (Sin-Tri-Sq)", 0.0, 2.0, 0.0)
   add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
 
+  params:add_group("Granular Feedback", 4)
+  -- Amount can go up to 2.0 because the .tanh saturator will protect us
+  add_eng_param("fbAmt", "Feedback Amount", 0.0, 0.9999, 0.0)
+  -- Delay time: 0.0001 creates high metallic pitches, 0.1 creates distinct grain echoes
+  add_eng_param("fbTime", "Feedback Time", 0.0001, 0.5, 0.01)
+  -- Dampening: 0.0 is completely bright, 0.99 is very muffled
+  add_eng_param("fbDamp", "Feedback Dampen", 0.0, 0.99, 0.5)
+  -- Free allows for dynamic setting of Feedback Time
+  -- Time will be ignored if Fundamental (following the base pitch of the oscillator)
+  -- or Formant (tracking Formant Ration * Fundamental) are selected
+  params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
+  params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
+
+  -- Add this below your Feedback Base parameters
+  params:add_group("Mod: Feedback", 6)
+  add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
+  add_eng_param("modVelFbTime", "Vel -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modVelFbDamp", "Vel -> FB Damp", -1.0, 1.0, 0.0)
+  add_eng_param("mwFbTime", "MW -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("mwFbDamp", "MW -> FB Damp", -1.0, 1.0, 0.0)
+
   params:add_group("Envelope", 4)
   add_eng_param("atk", "Attack", 0.001, 5.0, 0.01)
   add_eng_param("dec", "Decay", 0.001, 5.0, 0.2)
   add_eng_param("sus", "Sustain", 0.0, 1.0, 0.4)
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
 
-  params:add_group("LFO Base", 4)
+  params:add_group("LFO Base", 5)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end) -- SC uses 0-index
   add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
   add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
+  add_eng_param("mwLfoGlobal", "ModWheel -> LFO Scale", 0.0, 1.0, 0.0)
 
   params:add_group("Mod: LFO", 5)
   add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)
