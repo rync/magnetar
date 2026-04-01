@@ -1,5 +1,5 @@
-// Engine_PulsarPoly.sc
-Engine_PulsarPoly : CroneEngine {
+// Engine_Magnetar.sc
+Engine_Magnetar : CroneEngine {
     var <synthGroup;
     var <synths;
     var <globalParams;
