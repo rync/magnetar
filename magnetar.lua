@@ -46,12 +46,15 @@ local pages = {
   { name = "LFO", params = {
       {id="lfoShape",      disp="Wave Shape"},
       {id="lfoRate",       disp="Rate"},
+      {id="mwLfoGlobal",   disp="ModWheel LFO Depth"}, -- Global LFO Scale
       {id="modLfoFreq",    disp="->Frequency"},
       {id="modLfoAmp",     disp="->Amplitude"},
       {id="modLfoFormant", disp="->Formant"},
       {id="modLfoOverlap", disp="->Wavelet OverLap"},
-      {id="modLfoShape",   disp="->OSC Wave Shape"},
-      {id="modLfoPwm",     disp="->OSC Pulse Width"}
+      {id="modLfoShape",   disp="->Wave Shape"},
+      {id="modLfoPwm",     disp="->Pulse Width"},
+      {id="modLfoFbTime",  disp="->Feedback Time"},
+      {id="modLfoFbDamp",  disp="->Feedback Dampening"},
     }
   },
   { name = "Velocity", params = {
@@ -61,7 +64,9 @@ local pages = {
       {id="modVelShape",   disp="->OSC Wave Shape"},
       {id="velLfoFormant", disp="LFO -> Formant"},
       {id="velLfoOverlap", disp="LFO -> Overlap"},
-      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"}
+      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"},
+      {id="modVelFbTime", disp="->Feedback Time"},
+      {id="modVelFbDamp", disp="->Feedback Dampening"},
     }
   },
   { name = "Modwheel", params = {
@@ -70,7 +75,10 @@ local pages = {
       {id="mwShape",      disp=">OSC Wave Shape"},
       {id="mwLfoFormant", disp="LFO -> Formant"},
       {id="mwLfoOverlap", disp="LFO -> Overlap"},
-      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"}
+      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"},
+      {id="mwFbTime",     disp="->Feedback Time"},
+      {id="mwFbDamp",     disp="->Feedback Dampening"}
+
     }
   }
 }
@@ -323,17 +331,27 @@ function build_params()
   params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
   params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
+  -- Add this below your Feedback Base parameters
+  params:add_group("Mod: Feedback", 6)
+  add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
+  add_eng_param("modVelFbTime", "Vel -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modVelFbDamp", "Vel -> FB Damp", -1.0, 1.0, 0.0)
+  add_eng_param("mwFbTime", "MW -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("mwFbDamp", "MW -> FB Damp", -1.0, 1.0, 0.0)
+
   params:add_group("Envelope", 4)
   add_eng_param("atk", "Attack", 0.001, 5.0, 0.01)
   add_eng_param("dec", "Decay", 0.001, 5.0, 0.2)
   add_eng_param("sus", "Sustain", 0.0, 1.0, 0.4)
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
 
-  params:add_group("LFO Base", 4)
+  params:add_group("LFO Base", 5)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Noise"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end) -- SC uses 0-index
   add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
   add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
+  add_eng_param("mwLfoGlobal", "ModWheel -> LFO Scale", 0.0, 1.0, 0.0)
 
   params:add_group("Mod: LFO", 5)
   add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)

@@ -1,5 +1,5 @@
-// Engine_Magnetar.sc
-Engine_Magnetar : CroneEngine {
+// Engine_PulsarPoly.sc
+Engine_PulsarPoly : CroneEngine {
     var <synthGroup;
     var <synths;
     var <globalParams;
@@ -16,9 +16,14 @@ Engine_Magnetar : CroneEngine {
         [
             \amp, 0.5, \atk, 0.01, \dec, 0.2, \sus, 0.5, \rel, 0.5,
             \lfoShape, 0, \lfoRate, 5.0, \panSpread, 0.0, \modWheel, 0.0,
+            \mwLfoGlobal, 0.0, // <-- NEW: Global Modwheel to LFO scaling
             \formantRatio, 2.0, \formantFine, 1.0, \overlap, 0.5, \phaseOffset, 0.0,
             \shape, 0.0, \pwm, 0.5,
-            \fbAmt, 0.0, \fbTime, 0.01, \fbDamp, 0.5, // <-- NEW FEEDBACK DEFAULTS
+            \fbAmt, 0.0, \fbTime, 0.01, \fbDamp, 0.5, \fbTrackMode, 0,
+            // <-- NEW: Feedback Modulations
+            \modLfoFbTime, 0.0, \modLfoFbDamp, 0.0,
+            \modVelFbTime, 0.0, \modVelFbDamp, 0.0,
+            \mwFbTime, 0.0, \mwFbDamp, 0.0,
             \modEnvFormant, 0.0, \modEnvOverlap, 0.0, \modEnvShape, 0.0, \modEnvPwm, 0.0,
             \modLfoFreq, 0.0, \modLfoFormant, 0.0, \modLfoOverlap, 0.0, \modLfoShape, 0.0, \modLfoPwm, 0.0, \modLfoAmp, 0.0,
             \modVelFormant, 0.0, \modVelOverlap, 0.0, \modVelShape, 0.0, \velAmp, 1.0,
@@ -30,10 +35,11 @@ Engine_Magnetar : CroneEngine {
         SynthDef(\pulsarVoice, {
             arg out=0, gate=1, freq=440, vel=0.8, amp=0.5,
                 atk=0.01, dec=0.2, sus=0.5, rel=0.5,
-                lfoShape=0, lfoRate=5.0, panSpread=0.0, modWheel=0.0,
+                lfoShape=0, lfoRate=5.0, panSpread=0.0, modWheel=0.0, mwLfoGlobal=0.0,
                 formantRatio=2.0, formantFine=1.0, overlap=0.5, phaseOffset=0.0,
                 shape=0.0, pwm=0.5,
-                fbAmt=0.0, fbTime=0.01, fbDamp=0.5, fbTrackMode=0, // <-- NEW PARAM
+                fbAmt=0.0, fbTime=0.01, fbDamp=0.5, fbTrackMode=0,
+                modLfoFbTime=0.0, modLfoFbDamp=0.0, modVelFbTime=0.0, modVelFbDamp=0.0, mwFbTime=0.0, mwFbDamp=0.0,
                 modEnvFormant=0.0, modEnvOverlap=0.0, modEnvShape=0.0, modEnvPwm=0.0,
                 modLfoFreq=0.0, modLfoFormant=0.0, modLfoOverlap=0.0, modLfoShape=0.0, modLfoPwm=0.0, modLfoAmp=0.0,
                 modVelFormant=0.0, modVelOverlap=0.0, modVelShape=0.0, velAmp=1.0,
@@ -49,7 +55,13 @@ Engine_Magnetar : CroneEngine {
             var lfoSqr  = LFPulse.kr(lfoRate) * 2 - 1;
             var lfoSH   = LFNoise0.kr(lfoRate);
             var lfoNois = LFNoise2.kr(lfoRate);
-            var lfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois]);
+
+            // --- GLOBAL MODWHEEL -> LFO SCALING ---
+            // If mwLfoGlobal is 1.0, LFO is dead until MW is pushed up.
+            // If mwLfoGlobal is 0.0, MW has no global effect on LFO amplitude.
+            var rawLfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois]);
+            var lfoScale = 1.0 - mwLfoGlobal + (modWheel * mwLfoGlobal);
+            var lfo = rawLfo * lfoScale;
 
             var pan = Rand(-1.0, 1.0) * panSpread;
 
@@ -63,18 +75,20 @@ Engine_Magnetar : CroneEngine {
             var modShape = (shape + (modEnvShape * env) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
             var modPwm = (pwm + (modEnvPwm * env) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
-            // --- SMART FEEDBACK ROUTING ---
-            // Calculate the exact time required to delay by one pitch cycle
+            // --- FEEDBACK MODULATIONS ---
             var trackFundTime = 1.0 / modFreq;
             var trackFormTime = 1.0 / modFormant;
+            var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
 
-            // 0: Free (uses fbTime knob), 1: Fundamental, 2: Formant
-            var actualFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
+            // Time is modulated multiplicatively (pitch bend style)
+            var modFbTime = (baseFbTime * (1 + (modLfoFbTime * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
+            // Dampen is modulated additively
+            var modFbDamp = (fbDamp + (modLfoFbDamp * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
 
             var fbIn = LocalIn.ar(1);
-            var fbFiltered = OnePole.ar(fbIn, fbDamp);
-            // Max delay buffer set to 0.2s to save RAM, using actualFbTime
-            var fbDelayed = DelayC.ar(fbFiltered, 0.2, actualFbTime);
+            var fbFiltered = OnePole.ar(fbIn, modFbDamp);
+            // Max buffer extended to 0.5s to handle deep modulation
+            var fbDelayed = DelayC.ar(fbFiltered, 0.5, modFbTime);
 
             // --- Pulsar Core ---
             var trig = Impulse.ar(modFreq);
@@ -84,7 +98,6 @@ Engine_Magnetar : CroneEngine {
             var window = sin(envPhase * pi) * (envPhase < 1.0);
 
             var p = (Phasor.ar(trig, modFormant / SampleRate.ir, 0, 1) + (phaseOffset / (2*pi))) % 1.0;
-
             var wSin = sin(p * 2 * pi);
             var wTri = (4 * ((p + 0.25) % 1.0 - 0.5).abs) - 1;
             var wSqr = (p < modPwm) * 2 - 1;
