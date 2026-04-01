@@ -46,9 +46,13 @@ Engine_Magnetar : CroneEngine {
                 mwLfoFormant=0.0, mwLfoOverlap=0.0, mwLfoShape=0.0,
                 velLfoFormant=0.0, velLfoOverlap=0.0, velLfoShape=0.0;
 
-            // Notice how every single calculation is cleanly bundled as a 'var' declaration
-            var env = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
+            // --- THE OPTIMIZATION: Split Envelopes ---
+            // The .kr envelope drives the heavy math matrix (DoneAction frees the synth when finished)
+            var envKr = EnvGen.kr(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
+            // The .ar envelope ONLY drives the final volume block
+            var envAr = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate);
 
+            // (LFOs are already safely at .kr, which is perfect)
             var lfoSine = SinOsc.kr(lfoRate);
             var lfoTri  = LFTri.kr(lfoRate);
             var lfoSaw  = LFSaw.kr(lfoRate);
@@ -66,13 +70,13 @@ Engine_Magnetar : CroneEngine {
             var effLfoOverlap = modLfoOverlap + (modWheel * mwLfoOverlap) + (vel * velLfoOverlap);
             var effLfoShape   = modLfoShape   + (modWheel * mwLfoShape)   + (vel * velLfoShape);
 
+            // --- Math downgraded to .kr by using envKr ---
             var modFreq = freq * (1 + (modLfoFreq * lfo));
-            var modFormant = modFreq * formantRatio * formantFine * (1 + (modEnvFormant * env) + (effLfoFormant * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
-            var modOverlap = (overlap + (modEnvOverlap * env) + (effLfoOverlap * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
-            var modShape = (shape + (modEnvShape * env) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
-            var modPwm = (pwm + (modEnvPwm * env) + (modLfoPwm * lfo)).clip(0.01, 0.99);
+            var modFormant = modFreq * formantRatio * formantFine * (1 + (modEnvFormant * envKr) + (effLfoFormant * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
+            var modOverlap = (overlap + (modEnvOverlap * envKr) + (effLfoOverlap * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
+            var modShape = (shape + (modEnvShape * envKr) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
+            var modPwm = (pwm + (modEnvPwm * envKr) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
-            // --- Pulsar Core (The Exciter) ---
             var trig = Impulse.ar(modFreq);
             var timer = Sweep.ar(trig);
             var windowDuration = modOverlap / modFreq;
@@ -87,7 +91,6 @@ Engine_Magnetar : CroneEngine {
             var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
             var exciterGrain = baseOsc * window;
 
-            // --- SMART FEEDBACK ROUTING ---
             var trackFundTime = 1.0 / modFreq;
             var trackFormTime = 1.0 / modFormant;
             var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
@@ -95,19 +98,19 @@ Engine_Magnetar : CroneEngine {
             var modFbTime = (baseFbTime * (1 + (modLfoFbTime * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
             var modFbDamp = (fbDamp + (modLfoFbDamp * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
 
-            // Calculate Decay Time for the Comb Filter based on your fbAmt
             var ringTime = (fbAmt * 5.0).clip(0.0, 5.0);
 
-            // --- The Comb Resonator (C++ Optimized) ---
             var combOut = CombL.ar(exciterGrain, 0.5, modFbTime, ringTime);
             var filteredComb = OnePole.ar(combOut, modFbDamp);
 
             var resonated = (exciterGrain + (filteredComb * fbAmt)).softclip;
 
+            var fbComp = 1.0 / (1.0 + fbAmt);
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
-            var snd = resonated * amp * dynAmp * env * (1 + (modLfoAmp * lfo));
 
-            // The single, absolute final action statement.
+            // --- Final output uses the safe, smooth envAr ---
+            var snd = resonated * amp * fbComp * dynAmp * envAr * (1 + (modLfoAmp * lfo));
+
             Out.ar(out, Pan2.ar(snd, pan));
         }).add;
 
