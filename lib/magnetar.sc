@@ -46,21 +46,19 @@ Engine_Magnetar : CroneEngine {
                 mwLfoFormant=0.0, mwLfoOverlap=0.0, mwLfoShape=0.0,
                 velLfoFormant=0.0, velLfoOverlap=0.0, velLfoShape=0.0;
 
-            // --- THE OPTIMIZATION: Split Envelopes ---
-            // The .kr envelope drives the heavy math matrix (DoneAction frees the synth when finished)
             var envKr = EnvGen.kr(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
-            // The .ar envelope ONLY drives the final volume block
             var envAr = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate);
 
-            // (LFOs are already safely at .kr, which is perfect)
             var lfoSine = SinOsc.kr(lfoRate);
             var lfoTri  = LFTri.kr(lfoRate);
             var lfoSaw  = LFSaw.kr(lfoRate);
             var lfoSqr  = LFPulse.kr(lfoRate) * 2 - 1;
             var lfoSH   = LFNoise0.kr(lfoRate);
             var lfoNois = LFNoise2.kr(lfoRate);
+            var lfoWht  = WhiteNoise.kr(); // <-- NEW: White Noise Generator
 
-            var rawLfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois]);
+            // Added lfoWht to the end of the selection array (Index 6)
+            var rawLfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois, lfoWht]);
             var lfoScale = 1.0 - mwLfoGlobal + (modWheel * mwLfoGlobal);
             var lfo = rawLfo * lfoScale;
 
@@ -70,20 +68,24 @@ Engine_Magnetar : CroneEngine {
             var effLfoOverlap = modLfoOverlap + (modWheel * mwLfoOverlap) + (vel * velLfoOverlap);
             var effLfoShape   = modLfoShape   + (modWheel * mwLfoShape)   + (vel * velLfoShape);
 
-            // --- Math downgraded to .kr by using envKr ---
             var modFreq = freq * (1 + (modLfoFreq * lfo));
             var modFormant = modFreq * formantRatio * formantFine * (1 + (modEnvFormant * envKr) + (effLfoFormant * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
             var modOverlap = (overlap + (modEnvOverlap * envKr) + (effLfoOverlap * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
             var modShape = (shape + (modEnvShape * envKr) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
             var modPwm = (pwm + (modEnvPwm * envKr) + (modLfoPwm * lfo)).clip(0.01, 0.99);
 
+            // --- THE MULTIPLICATION OPTIMIZATIONS ---
             var trig = Impulse.ar(modFreq);
             var timer = Sweep.ar(trig);
-            var windowDuration = modOverlap / modFreq;
-            var envPhase = timer / windowDuration;
+
+            // 1. Calculate rate at .kr, multiply at .ar
+            var windowRate = modFreq / modOverlap;
+            var envPhase = timer * windowRate;
             var window = sin(envPhase * pi) * (envPhase < 1.0);
 
-            var p = (Phasor.ar(trig, modFormant / SampleRate.ir, 0, 1) + (phaseOffset / (2*pi))) % 1.0;
+            // 2. Multiply by SampleDur.ir instead of dividing by SampleRate.ir
+            // 3. Multiply by 0.15915 (1/2pi) instead of dividing by (2*pi)
+            var p = (Phasor.ar(trig, modFormant * SampleDur.ir, 0, 1) + (phaseOffset * 0.15915)) % 1.0;
             var wSin = sin(p * 2 * pi);
             var wTri = (4 * ((p + 0.25) % 1.0 - 0.5).abs) - 1;
             var wSqr = (p < modPwm) * 2 - 1;
@@ -91,6 +93,7 @@ Engine_Magnetar : CroneEngine {
             var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
             var exciterGrain = baseOsc * window;
 
+            // Tracking times are evaluated at .kr so division is completely fine here
             var trackFundTime = 1.0 / modFreq;
             var trackFormTime = 1.0 / modFormant;
             var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
@@ -105,10 +108,10 @@ Engine_Magnetar : CroneEngine {
 
             var resonated = (exciterGrain + (filteredComb * fbAmt)).softclip;
 
+            // Use multiplication ( * 0.5 ) instead of division ( / 2.0 ) wherever possible
             var fbComp = 1.0 / (1.0 + fbAmt);
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
 
-            // --- Final output uses the safe, smooth envAr ---
             var snd = resonated * amp * fbComp * dynAmp * envAr * (1 + (modLfoAmp * lfo));
 
             Out.ar(out, Pan2.ar(snd, pan));
