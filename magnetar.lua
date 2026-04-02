@@ -1,6 +1,14 @@
--- Magnetar
+--
+--           Magnetar
 -- Polyphonic Pulsar Synthesizer
-
+--
+--   E1 - select parameter group
+--   E2 - select parameter
+--   E3 - adjust parameter value
+--
+--   K3 - return to default value
+--   K1 + E1 - select between
+--        animation and full menu
 engine.name = 'Magnetar'
 local MusicUtil = require("musicutil")
 
