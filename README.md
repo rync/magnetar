@@ -28,6 +28,8 @@ The magic of pulsar synthesis comes from decoupling the **Fundamental Frequency*
 * **Formant Frequency:** This dictates the pitch of the waveform *inside* the burst itself. Changing this alters the timbre or "vowel" sound of the note without changing the fundamental pitch.  
 * **Overlap (Duty Cycle):** This determines how much of the cycle is filled with the pulsaret versus the silent interval. An overlap of 1.0 means continuous sound (like a standard oscillator). An overlap of 0.1 means a tiny click followed by a long silence.
 
+![Pulsar Synthesis Example](docs/pulsar_example.png)
+
 By manipulating these three parameters simultaneously, you can create sounds that smoothly morph from rhythmic clicking into pitched tones and complex, vocal-like formants.
 
 ## **3\. Controls**
