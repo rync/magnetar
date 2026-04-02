@@ -1,10 +1,12 @@
 # Magnetar
-
+![Cover Splash](docs/cover.png)
 ### Polyphonic Pulsar Synthesizer for Norns
 
 ## **Overview**
 
 Magnetar is a 12-voice polyphonic pulsar synthesizer built for the monome norns ecosystem. It bridges the gap between classic granular textures, vocal-like formant shifting, and physical modeling. By generating tiny bursts of sound separated by calculated silences, and feeding those bursts through a resonant comb filter, Magnetar can produce everything from tearing sub-bass and crystalline choirs to realistic plucked strings and chaotic, crumbling noise.
+
+![Main Page View](docs/main_page.png)
 
 The instrument features a rich, OLED-optimized visualizer that renders the synthesizer’s engine as a rotating star core, with orbiting particles that react in real-time to your envelopes, LFOs, and voice allocation.
 
@@ -40,6 +42,8 @@ Magnetar utilizes a paged interface to handle its extensive parameter matrix. Yo
 ## **Voice Design**
 
 Magnetar features a flexible voice architecture designed to maximize the Norns CPU.
+
+![Menu](docs/menu.png)
 
 ### **Voice Modes**
 
