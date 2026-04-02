@@ -21,6 +21,7 @@ local stars = {}
 local pages = {
   { name = "Voice", params = {
       {id="voiceMode",    disp="Voice Mode"},
+      {id="polyVoices",   disp="Polyphony Cap"},
       {id="voiceSpread",  disp="Unison Spread"},
       {id="glide",        disp="Glide Time"},
       {id="panSpread",    disp="Stereo Spread"}
@@ -35,8 +36,8 @@ local pages = {
       {id="phaseOffset",  disp="Phase Offset"},
     }
   },
-  { name = "Comb Filter Feedback", params = {
-      {id="fbTrackMode",  disp="Tracking"},
+  { name = "Comb Filter", params = {
+      {id="fbTrackMode",  disp="Tracking Mode"},
       {id="fbAmt",        disp="Amount"},
       {id="fbTime",       disp="Time"},
       {id="fbDamp",       disp="Dampening"}
@@ -158,12 +159,32 @@ function init()
   end)
 end
 
+-- Abstract Detune Function: Converts 0-1 spread into precise semitone offsets
+local function calc_detune_hz(base_hz, voice_index, center_index)
+  local spread = params:get("voiceSpread")
+  local step_st = 0
+
+  if spread <= 0.5 then
+    -- Continuous: 0 to 2 semitones (Major 2nd)
+    step_st = (spread * 2) * 2
+  else
+    -- Stepped: Minor 3rd, Major 3rd, Perfect 4th, Perfect 5th, Major 6th, Octave, Octave+5th
+    local snaps = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+    local idx = math.floor((spread - 0.5001) * 2 * #snaps) + 1
+    idx = util.clamp(idx, 1, #snaps)
+    step_st = snaps[idx]
+  end
+
+  local st_offset = (voice_index - center_index) * step_st
+  -- True pitch calculation rather than simple linear multipliers
+  return base_hz * (2 ^ (st_offset / 12))
+end
+
 function setup_midi()
   m = midi.connect()
   m.event = function(data)
     local d = midi.to_msg(data)
     local v_mode = params:get("voiceMode")
-    local spread = params:get("voiceSpread")
 
     if d.type == "note_on" then
       if active_notes[d.note] then
@@ -176,7 +197,10 @@ function setup_midi()
       local vel = d.vel / 127
 
       if v_mode == 1 then
-        if #note_order >= MAX_VOICES then
+        local active_limit = params:get("polyVoices")
+        -- Voice Stealing: Use a WHILE loop in case the user lowered the cap
+        -- drastically (e.g. from 12 to 4) while holding notes.
+        while #note_order >= active_limit do
           local oldest = table.remove(note_order, 1)
           engine.noteOff(oldest)
           active_notes[oldest] = nil
@@ -191,29 +215,30 @@ function setup_midi()
         anim_notes[d.note] = { freq = hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
 
       elseif v_mode == 2 then
-        local mono_voices = 5
+        local mono_voices = 8
         active_notes[d.note] = true
         table.insert(note_order, d.note)
 
         if voices_active == 0 then
           for i=1, mono_voices do
-            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
-            local v_hz = hz * (1 + detune)
+            local v_hz = calc_detune_hz(hz, i, 4.5)
             engine.noteOn(i, v_hz, vel)
             anim_notes[i] = { freq = v_hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
           end
           voices_active = mono_voices
         else
           for i=1, mono_voices do
-            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
-            local v_hz = hz * (1 + detune)
+            local v_hz = calc_detune_hz(hz, i, 4.5)
             engine.setVoiceFreq(i, v_hz)
             if anim_notes[i] then anim_notes[i].freq = v_hz end
           end
         end
 
       elseif v_mode == 3 then
-        if #note_order >= 4 then
+        -- 4x3 calculates its active note cap strictly based on the Polyphony user setting
+        local max_cluster_notes = math.max(1, math.floor(params:get("polyVoices") / 3))
+
+        while #note_order >= max_cluster_notes do
           local oldest = table.remove(note_order, 1)
           active_notes[oldest] = nil
           for i=1, 3 do
@@ -228,8 +253,7 @@ function setup_midi()
         table.insert(note_order, d.note)
 
         for i=1, 3 do
-          local detune = (i - 2) * spread * 0.05
-          local v_hz = hz * (1 + detune)
+          local v_hz = calc_detune_hz(hz, i, 2.0)
           local id = d.note * 10 + i
           engine.noteOn(id, v_hz, vel)
           anim_notes[id] = { freq = v_hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
@@ -256,8 +280,7 @@ function setup_midi()
           local last_note = note_order[#note_order]
           local hz = MusicUtil.note_num_to_freq(last_note)
           for i=1, mono_voices do
-            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
-            local v_hz = hz * (1 + detune)
+            local v_hz = calc_detune_hz(hz, i, 4.5)
             engine.setVoiceFreq(i, v_hz)
             if anim_notes[i] then anim_notes[i].freq = v_hz end
           end
@@ -337,6 +360,7 @@ end
 local function is_param_disabled(id)
   if id == "fbTime" and params:get("fbTrackMode") ~= 1 then return true end
   if (id == "voiceSpread" or id == "glide") and params:get("voiceMode") == 1 then return true end
+  if id == "polyVoices" and params:get("voiceMode") == 2 then return true end
   if id == "lfoRate" and params:get("lfoShape") == 7 then return true end
   return false
 end
@@ -349,10 +373,24 @@ function redraw()
   local p_id = current_p.id
   local p_val_str = params:string(p_id)
 
-  if p_id == "formantRatio" then p_val_str = ratio_labels[params:get(p_id)] end
-  if p_id == "voiceMode" then
+  -- UI Output Overrides for dynamic text rendering
+  if p_id == "formantRatio" then
+    p_val_str = ratio_labels[params:get(p_id)]
+  elseif p_id == "voiceMode" then
     local vm = params:get(p_id)
     p_val_str = (vm == 1) and "Poly" or ((vm == 2) and "Mono" or "4x3")
+  elseif p_id == "voiceSpread" then
+    local sp = params:get(p_id)
+    if sp <= 0.5 then
+      p_val_str = string.format("%.2f st", (sp * 2) * 2)
+    else
+      local snaps = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+      local idx = math.floor((sp - 0.5001) * 2 * #snaps) + 1
+      idx = util.clamp(idx, 1, #snaps)
+      p_val_str = snaps[idx] .. " st"
+    end
+  elseif p_id == "polyVoices" then
+    p_val_str = string.format("%d Voices", params:get(p_id))
   end
 
   local full_p_name = params:lookup_param(p_id).name
@@ -362,15 +400,13 @@ function redraw()
     -- ==========================================
     -- MAIN PAGE (CORNERS)
     -- ==========================================
-
     screen.level(4)
     screen.move(0, 8)
     screen.text(pages[target_page].name .. " [" .. selected_param .. "/" .. #pages[target_page].params .. "]")
 
-    -- Draw Background Shading if Disabled
     if is_disabled then
-      screen.level(1) -- Very dark, subtle gray
-      screen.rect(0, 54, 128, 10) -- Box behind the bottom row
+      screen.level(1)
+      screen.rect(0, 54, 128, 10)
       screen.fill()
     end
 
@@ -500,7 +536,7 @@ function redraw()
     -- ==========================================
     screen.level(15)
     screen.move(0, 10)
-    screen.text(pages[current_page].name .. "   [V:" .. voices_active .. "]")
+    screen.text(pages[current_page].name .. "   [V:" .. voices_active .. "/" .. params:get("polyVoices") .. "]")
     screen.move(0, 14)
     screen.line(128, 14)
     screen.stroke()
@@ -517,7 +553,6 @@ function redraw()
       local y = 26 + (i - start_idx) * 9
       local is_list_item_disabled = is_param_disabled(p.id)
 
-      -- Draw Background Box for disabled list items
       if is_list_item_disabled then
         screen.level(1)
         screen.rect(0, y - 7, 128, 9)
@@ -535,12 +570,27 @@ function redraw()
       screen.move(8, y)
       screen.text(p.disp)
 
+      -- Generate correct strings for standard menu rendering
       local v_str = params:string(p.id)
-      if p.id == "formantRatio" then v_str = ratio_labels[params:get(p.id)] end
-      if p.id == "voiceMode" then
+      if p.id == "formantRatio" then
+        v_str = ratio_labels[params:get(p.id)]
+      elseif p.id == "voiceMode" then
         local vm = params:get(p.id)
         v_str = (vm == 1) and "Poly" or ((vm == 2) and "Mono" or "4x3")
+      elseif p.id == "voiceSpread" then
+        local sp = params:get(p.id)
+        if sp <= 0.5 then
+          v_str = string.format("%.2f st", (sp * 2) * 2)
+        else
+          local snaps = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+          local idx = math.floor((sp - 0.5001) * 2 * #snaps) + 1
+          idx = util.clamp(idx, 1, #snaps)
+          v_str = snaps[idx] .. " st"
+        end
+      elseif p.id == "polyVoices" then
+        v_str = string.format("%d", params:get(p.id))
       end
+
       screen.move(128, y)
       screen.text_right(v_str)
     end
@@ -557,7 +607,7 @@ function build_params()
     params:set_action(id, function(v) engine.setParam(id, v) end)
   end
 
-  params:add_group("Oscillator", 8)
+  params:add_group("Voice", 5)
 
   params:add_option("voiceMode", "Voice Mode", {"Poly", "Mono Unison", "4x3 Unison"}, 1)
   params:set_action("voiceMode", function()
@@ -570,72 +620,67 @@ function build_params()
     anim_notes = {}
     note_order = {}
   end)
+  -- The new Polyphony limiting parameter!
+  params:add_number("polyVoices", "Polyphony Cap", 1, 12, 8)
   add_eng_param("voiceSpread", "Unison Spread", 0.0, 1.0, 0.1)
   add_eng_param("glide", "Glide Time", 0.0, 5.0, 0.0)
+  add_eng_param("panSpread", "Stereo Spread", 0.0, 1.0, 0.0)
 
+  params:add_group("Oscillator", 6)
+  add_eng_param("shape", "Shape (Sin-Tri-Sq)", 0.0, 2.0, 0.0)
+  add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
   params:add_option("formantRatio", "Formant Ratio", ratio_labels, 4)
   params:set_action("formantRatio", function(v) engine.setParam("formantRatio", ratio_values[v]) end)
   add_eng_param("formantFine", "Formant Fine", 0.25, 1.75, 1.0)
   add_eng_param("overlap", "Overlap (PulWM)", 0.01, 1.6, 0.03)
   add_eng_param("phaseOffset", "Phase Offset", 0.0, 6.28, 0.0)
-  add_eng_param("panSpread", "Stereo Spread", 0.0, 1.0, 0.0)
 
-  params:add_group("Waveform Morph", 2)
-  add_eng_param("shape", "Shape (Sin-Tri-Sq)", 0.0, 2.0, 0.0)
-  add_eng_param("pwm", "Square PWM", 0.0, 1.0, 0.5)
-
-  params:add_group("Granular Feedback", 4)
+  params:add_group("Comb Filter", 4)
+  params:add_option("fbTrackMode", "Tracking Mode", {"Free", "Fundamental", "Formant"}, 1)
+  params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
   add_eng_param("fbAmt", "Feedback Amount", 0.0, 0.9999, 0.0)
   add_eng_param("fbTime", "Feedback Time", 0.0001, 0.5, 0.01)
   add_eng_param("fbDamp", "Feedback Dampen", 0.0, 0.99, 0.5)
-  params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
-  params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
-  params:add_group("Mod: Feedback", 6)
-  add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
-  add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
-  add_eng_param("modVelFbTime", "Vel -> FB Time", -1.0, 1.0, 0.0)
-  add_eng_param("modVelFbDamp", "Vel -> FB Damp", -1.0, 1.0, 0.0)
-  add_eng_param("mwFbTime", "MW -> FB Time", -1.0, 1.0, 0.0)
-  add_eng_param("mwFbDamp", "MW -> FB Damp", -1.0, 1.0, 0.0)
-
-  params:add_group("Envelope", 4)
+  params:add_group("Envelope", 9)
   add_eng_param("atk", "Attack", 0.001, 5.0, 0.01)
   add_eng_param("dec", "Decay", 0.001, 5.0, 0.2)
   add_eng_param("sus", "Sustain", 0.0, 1.0, 0.4)
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
-
-  params:add_group("LFO Base", 3)
-  params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "White"}, 1)
-  params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 520.0, 0.8)
-  add_eng_param("mwLfoGlobal", "ModWheel LFO Depth", 0.0, 1.0, 0.0)
-
-  params:add_group("Mod: LFO", 6)
-  add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)
-  add_eng_param("modLfoOverlap", "LFO -> Overlap", -1.0, 1.0, 0.0)
-  add_eng_param("modLfoShape", "LFO -> Shape", -2.0, 2.0, 0.0)
-  add_eng_param("modLfoPwm", "LFO -> PWM", -1.0, 1.0, 0.0)
-  add_eng_param("modLfoAmp", "LFO -> Amp", 0.0, 1.0, 0.0)
-  add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
-
-  params:add_group("Mod: Envelope", 5)
   add_eng_param("modEnvFormant", "Env -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("modEnvOverlap", "Env -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("modEnvPhase", "Env -> Phase", -6.28, 6.28, 0.0)
   add_eng_param("modEnvShape", "Env -> Shape", -2.0, 2.0, 0.0)
   add_eng_param("modEnvPwm", "Env -> PWM", -1.0, 1.0, 0.0)
 
-  params:add_group("Mod: Velocity Direct", 4)
+  params:add_group("LFO", 11)
+  params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "Noise"}, 1)
+  params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
+  add_eng_param("mwLfoGlobal", "ModWheel LFO Depth", 0.0, 1.0, 0.0)
+  add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoAmp", "LFO -> Amp", 0.0, 1.0, 0.0)
+  add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)
+  add_eng_param("modLfoOverlap", "LFO -> Overlap", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoShape", "LFO -> Shape", -2.0, 2.0, 0.0)
+  add_eng_param("modLfoPwm", "LFO -> PWM", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
+
+  params:add_group("Velocity", 6)
   add_eng_param("velAmp", "Vel -> Amp", 0.0, 1.0, 1.0)
   add_eng_param("modVelFormant", "Vel -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("modVelOverlap", "Vel -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("modVelShape", "Vel -> Shape", -2.0, 2.0, 0.0)
+  add_eng_param("modVelFbTime", "Vel -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("modVelFbDamp", "Vel -> FB Damp", -1.0, 1.0, 0.0)
 
-  params:add_group("Mod: Mod Wheel Direct", 3)
+  params:add_group("Modwheel", 5)
   add_eng_param("mwFormant", "Wheel -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("mwOverlap", "Wheel -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("mwShape", "Wheel -> Shape", -2.0, 2.0, 0.0)
+  add_eng_param("mwFbTime", "Wheel -> FB Time", -1.0, 1.0, 0.0)
+  add_eng_param("mwFbDamp", "Wheel -> FB Damp", -1.0, 1.0, 0.0)
 
   params:bang()
 end
