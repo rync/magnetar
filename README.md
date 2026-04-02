@@ -1,6 +1,7 @@
 # Magnetar
-![Cover Splash](docs/cover.png)
 ### Polyphonic Pulsar Synthesizer for Norns
+![Cover Splash](docs/cover.png)
+
 
 ## **Overview**
 
