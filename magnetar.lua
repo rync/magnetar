@@ -1,6 +1,14 @@
--- Magnetar
+--
+--           Magnetar
 -- Polyphonic Pulsar Synthesizer
-
+--
+--   E1 - select parameter group
+--   E2 - select parameter
+--   E3 - adjust parameter value
+--
+--   K3 - return to default value
+--   K1 + E1 - select between
+--        animation and full menu
 engine.name = 'Magnetar'
 local MusicUtil = require("musicutil")
 
@@ -10,6 +18,7 @@ local note_order = {}
 local voices_active = 0
 local ui_time = 0
 
+local show_splash = true
 local current_page = 0
 local menu_page = 1
 local selected_param = 1
@@ -186,6 +195,11 @@ function setup_midi()
     local d = midi.to_msg(data)
     local v_mode = params:get("voiceMode")
 
+    -- Dismiss splash screen if MIDI is played
+    if d.type == "note_on" and show_splash then
+      show_splash = false
+    end
+
     if d.type == "note_on" then
       if active_notes[d.note] then
         for i, n in ipairs(note_order) do
@@ -308,6 +322,12 @@ function setup_midi()
 end
 
 function key(n, z)
+  -- Dismiss splash on any key press
+  if show_splash and z == 1 then
+    show_splash = false
+    return
+  end
+
   if n == 1 then k1_held = (z == 1) end
   if n == 3 and z == 1 then
     local target_page = current_page == 0 and menu_page or current_page
@@ -317,6 +337,11 @@ function key(n, z)
 end
 
 function enc(n, delta)
+  if show_splash then
+    show_splash = false
+    return
+  end
+
   if n == 1 then
     if k1_held then
       if current_page == 0 then current_page = menu_page else menu_page = current_page; current_page = 0 end
@@ -368,12 +393,61 @@ end
 function redraw()
   screen.clear()
 
+  if show_splash then
+    -- Draw randomly twinkling background stars
+    for _, star in ipairs(stars) do
+      screen.level(math.random(1, 6))
+      screen.pixel(star.x, star.y)
+    end
+
+    local cx, cy = 64, 26
+
+    -- Stylized Magnetar Plumes
+    screen.level(5)
+    for i=1, 5 do
+      screen.move(cx - 2 + i, cy)
+      screen.line(cx - 2 + i, cy - 24 + math.random(-2, 2))
+      screen.stroke()
+      screen.move(cx - 2 + i, cy)
+      screen.line(cx - 2 + i, cy + 24 + math.random(-2, 2))
+      screen.stroke()
+    end
+
+    -- Rotating Magnetic Field Rings
+    screen.level(3)
+    for i=1, 4 do
+      local r = 8 + (i * 3)
+      local phase = ui_time * (1.5 - (i * 0.2))
+      screen.arc(cx, cy, r, phase, phase + math.pi/1.5)
+      screen.stroke()
+      screen.arc(cx, cy, r, phase + math.pi, phase + math.pi + math.pi/1.5)
+      screen.stroke()
+    end
+
+    -- Pulsing Core
+    screen.level(15)
+    screen.circle(cx, cy, 5 + math.sin(ui_time * 3) * 1.5)
+    screen.fill()
+
+    -- Title Text
+    screen.level(15)
+    screen.move(64, 52)
+    screen.text_center("M A G N E T A R")
+
+    -- Controls Cheat Sheet
+    screen.level(4)
+    screen.move(64, 62)
+    screen.text_center("E1:Group   E2:Param   E3:Val")
+
+    screen.update()
+    return
+  end
+
   local target_page = current_page == 0 and menu_page or current_page
   local current_p = pages[target_page].params[selected_param]
   local p_id = current_p.id
   local p_val_str = params:string(p_id)
 
-  -- UI Output Overrides for dynamic text rendering
   if p_id == "formantRatio" then
     p_val_str = ratio_labels[params:get(p_id)]
   elseif p_id == "voiceMode" then
@@ -516,6 +590,27 @@ function redraw()
 
       local radius_x = orbit_width + data.dist_offset
       local radius_y = orbit_height
+
+      -- Draw Fading Trails
+      local trail_length = 6
+      for i = 1, trail_length do
+        -- Calculate previous angle positions
+        local t_angle = data.angle - (speed * 0.1 * i * 1.5)
+        local t_ox = math.cos(t_angle) * radius_x
+        local t_oy = math.sin(t_angle) * radius_y
+
+        local t_px = cx + (t_ox * math.cos(orbit_tilt) - t_oy * math.sin(orbit_tilt))
+        local t_py = cy + (t_ox * math.sin(orbit_tilt) + t_oy * math.cos(orbit_tilt))
+
+        -- Fade brightness progressively backwards
+        local t_bright = math.floor((data.env * 15) * (1 - (i / (trail_length + 1))))
+        if t_bright > 0 then
+          screen.level(t_bright)
+          screen.pixel(math.floor(t_px), math.floor(t_py))
+        end
+      end
+
+      -- Draw Main Head Particle
       local ox = math.cos(data.angle) * radius_x
       local oy = math.sin(data.angle) * radius_y
 
@@ -570,7 +665,6 @@ function redraw()
       screen.move(8, y)
       screen.text(p.disp)
 
-      -- Generate correct strings for standard menu rendering
       local v_str = params:string(p.id)
       if p.id == "formantRatio" then
         v_str = ratio_labels[params:get(p.id)]
