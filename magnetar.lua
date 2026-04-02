@@ -19,10 +19,14 @@ local anim_notes = {}
 local stars = {}
 
 local pages = {
-  { name = "Oscillator", params = {
+  { name = "Voice", params = {
       {id="voiceMode",    disp="Voice Mode"},
       {id="voiceSpread",  disp="Unison Spread"},
       {id="glide",        disp="Glide Time"},
+      {id="panSpread",    disp="Stereo Spread"}
+    }
+  },
+  { name = "Oscillator", params = {
       {id="shape",        disp="Wave Shape"},
       {id="pwm",          disp="Pulse Width"},
       {id="formantRatio", disp="Formant Ratio"},
@@ -32,8 +36,7 @@ local pages = {
       {id="fbAmt",        disp="Feedback Amount"},
       {id="fbTime",       disp="Feedback Time"},
       {id="fbDamp",       disp="Feedback Dampen"},
-      {id="fbTrackMode",  disp="Feedback Tracking"},
-      {id="panSpread",    disp="Stereo Spread"}
+      {id="fbTrackMode",  disp="Feedback Tracking"}
     }
   },
   { name = "Envelope", params = {
