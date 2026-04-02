@@ -82,7 +82,7 @@ local pages = {
 }
 
 local ratio_values = {0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}
-local ratio_labels = {"1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
+local ratio_labels = {"0.125", "0.25", "0.5", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 
 function init_stars()
   local function get_valid_pos()
@@ -185,7 +185,7 @@ function setup_midi()
         anim_notes[d.note] = { freq = hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
 
       elseif v_mode == 2 then
-        local mono_voices = 8
+        local mono_voices = 5
         active_notes[d.note] = true
         table.insert(note_order, d.note)
 
@@ -602,7 +602,7 @@ function build_params()
   params:add_group("LFO Base", 3)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "White"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 520.0, 0.8)
   add_eng_param("mwLfoGlobal", "ModWheel LFO Depth", 0.0, 1.0, 0.0)
 
   params:add_group("Mod: LFO", 6)
