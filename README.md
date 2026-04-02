@@ -8,6 +8,8 @@ Magnetar is a 12-voice polyphonic pulsar synthesizer built for the monome norns 
 
 The instrument features a rich, OLED-optimized visualizer that renders the synthesizer’s engine as a rotating star core, with orbiting particles that react in real-time to your envelopes, LFOs, and voice allocation.
 
+Magnetar is a vibe-coded project created with Google Gemini.
+
 ## **What is Pulsar Synthesis?**
 
 Pulsar synthesis is a specialized technique within the broader family of granular synthesis, originally developed by electronic music pioneer Curtis Roads.
