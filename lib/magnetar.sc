@@ -15,36 +15,29 @@ Engine_Magnetar : CroneEngine {
 
         [
             \amp, 0.5, \atk, 0.01, \dec, 0.2, \sus, 0.5, \rel, 0.5,
-            \lfoShape, 0, \lfoRate, 5.0, \panSpread, 0.0, \modWheel, 0.0,
-            \mwLfoGlobal, 0.0,
+            \lfoShape, 0, \lfoRate, 5.0, \panSpread, 0.0, \modWheel, 0.0, \mwLfoGlobal, 0.0,
             \formantRatio, 2.0, \formantFine, 1.0, \overlap, 0.5, \phaseOffset, 0.0,
-            \shape, 0.0, \pwm, 0.5,
+            \shape, 0.0, \pwm, 0.5, \glide, 0.0,
             \fbAmt, 0.0, \fbTime, 0.01, \fbDamp, 0.5, \fbTrackMode, 0,
-            \modLfoFbTime, 0.0, \modLfoFbDamp, 0.0,
-            \modVelFbTime, 0.0, \modVelFbDamp, 0.0,
-            \mwFbTime, 0.0, \mwFbDamp, 0.0,
-            \modEnvFormant, 0.0, \modEnvOverlap, 0.0, \modEnvShape, 0.0, \modEnvPwm, 0.0,
+            \modLfoFbTime, 0.0, \modLfoFbDamp, 0.0, \modVelFbTime, 0.0, \modVelFbDamp, 0.0, \mwFbTime, 0.0, \mwFbDamp, 0.0,
+            \modEnvFormant, 0.0, \modEnvOverlap, 0.0, \modEnvShape, 0.0, \modEnvPwm, 0.0, \modEnvPhase, 0.0,
             \modLfoFreq, 0.0, \modLfoFormant, 0.0, \modLfoOverlap, 0.0, \modLfoShape, 0.0, \modLfoPwm, 0.0, \modLfoAmp, 0.0,
             \modVelFormant, 0.0, \modVelOverlap, 0.0, \modVelShape, 0.0, \velAmp, 1.0,
-            \mwFormant, 0.0, \mwOverlap, 0.0, \mwShape, 0.0,
-            \mwLfoFormant, 0.0, \mwLfoOverlap, 0.0, \mwLfoShape, 0.0,
-            \velLfoFormant, 0.0, \velLfoOverlap, 0.0, \velLfoShape, 0.0
+            \mwFormant, 0.0, \mwOverlap, 0.0, \mwShape, 0.0
         ].pairsDo { |k, v| globalParams.put(k, v) };
 
         SynthDef(\pulsarVoice, {
-            arg out=0, gate=1, freq=440, vel=0.8, amp=0.5,
+            arg out=0, gate=1, freq=440, vel=0.8, amp=0.5, glide=0.0,
                 atk=0.01, dec=0.2, sus=0.5, rel=0.5,
                 lfoShape=0, lfoRate=5.0, panSpread=0.0, modWheel=0.0, mwLfoGlobal=0.0,
                 formantRatio=2.0, formantFine=1.0, overlap=0.5, phaseOffset=0.0,
                 shape=0.0, pwm=0.5,
                 fbAmt=0.0, fbTime=0.01, fbDamp=0.5, fbTrackMode=0,
                 modLfoFbTime=0.0, modLfoFbDamp=0.0, modVelFbTime=0.0, modVelFbDamp=0.0, mwFbTime=0.0, mwFbDamp=0.0,
-                modEnvFormant=0.0, modEnvOverlap=0.0, modEnvShape=0.0, modEnvPwm=0.0,
+                modEnvFormant=0.0, modEnvOverlap=0.0, modEnvShape=0.0, modEnvPwm=0.0, modEnvPhase=0.0,
                 modLfoFreq=0.0, modLfoFormant=0.0, modLfoOverlap=0.0, modLfoShape=0.0, modLfoPwm=0.0, modLfoAmp=0.0,
                 modVelFormant=0.0, modVelOverlap=0.0, modVelShape=0.0, velAmp=1.0,
-                mwFormant=0.0, mwOverlap=0.0, mwShape=0.0,
-                mwLfoFormant=0.0, mwLfoOverlap=0.0, mwLfoShape=0.0,
-                velLfoFormant=0.0, velLfoOverlap=0.0, velLfoShape=0.0;
+                mwFormant=0.0, mwOverlap=0.0, mwShape=0.0;
 
             var envKr = EnvGen.kr(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
             var envAr = EnvGen.ar(Env.adsr(atk, dec, sus, rel), gate);
@@ -55,37 +48,40 @@ Engine_Magnetar : CroneEngine {
             var lfoSqr  = LFPulse.kr(lfoRate) * 2 - 1;
             var lfoSH   = LFNoise0.kr(lfoRate);
             var lfoNois = LFNoise2.kr(lfoRate);
-            var lfoWht  = WhiteNoise.kr(); // <-- NEW: White Noise Generator
+            var lfoWht  = WhiteNoise.kr();
 
-            // Added lfoWht to the end of the selection array (Index 6)
             var rawLfo = Select.kr(lfoShape, [lfoSine, lfoTri, lfoSaw, lfoSqr, lfoSH, lfoNois, lfoWht]);
-            var lfoScale = 1.0 - mwLfoGlobal + (modWheel * mwLfoGlobal);
-            var lfo = rawLfo * lfoScale;
+            var lfo = rawLfo * (1.0 - mwLfoGlobal + (modWheel * mwLfoGlobal));
+
+            var laggedFreq = VarLag.kr(freq, glide, warp:\exp);
+
+            var c_LfoFreq = modLfoFreq.cubed;
+            var c_LfoForm = modLfoFormant.cubed;
+            var c_LfoOvr = modLfoOverlap.cubed;
+            var c_LfoShp = modLfoShape.cubed;
+            var c_LfoPwm = modLfoPwm.cubed;
+
+            var c_EnvForm = modEnvFormant.cubed;
+            var c_EnvOvr = modEnvOverlap.cubed;
+            var c_EnvShp = modEnvShape.cubed;
+            var c_EnvPwm = modEnvPwm.cubed;
+            var c_EnvPhs = modEnvPhase.cubed;
 
             var pan = Rand(-1.0, 1.0) * panSpread;
 
-            var effLfoFormant = modLfoFormant + (modWheel * mwLfoFormant) + (vel * velLfoFormant);
-            var effLfoOverlap = modLfoOverlap + (modWheel * mwLfoOverlap) + (vel * velLfoOverlap);
-            var effLfoShape   = modLfoShape   + (modWheel * mwLfoShape)   + (vel * velLfoShape);
+            var modFreq = laggedFreq * (1 + (c_LfoFreq * lfo));
+            var modFormant = modFreq * formantRatio * formantFine * (1 + (c_EnvForm * envKr) + (c_LfoForm * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
+            var modOverlap = (overlap + (c_EnvOvr * envKr) + (c_LfoOvr * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
+            var modShape = (shape + (c_EnvShp * envKr) + (c_LfoShp * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
+            var modPwm = (pwm + (c_EnvPwm * envKr) + (c_LfoPwm * lfo)).clip(0.01, 0.99);
 
-            var modFreq = freq * (1 + (modLfoFreq * lfo));
-            var modFormant = modFreq * formantRatio * formantFine * (1 + (modEnvFormant * envKr) + (effLfoFormant * lfo) + (modVelFormant * vel) + (mwFormant * modWheel));
-            var modOverlap = (overlap + (modEnvOverlap * envKr) + (effLfoOverlap * lfo) + (modVelOverlap * vel) + (mwOverlap * modWheel)).clip(0.001, 1.0);
-            var modShape = (shape + (modEnvShape * envKr) + (effLfoShape * lfo) + (modVelShape * vel) + (mwShape * modWheel)).clip(0.0, 2.0);
-            var modPwm = (pwm + (modEnvPwm * envKr) + (modLfoPwm * lfo)).clip(0.01, 0.99);
-
-            // --- THE MULTIPLICATION OPTIMIZATIONS ---
             var trig = Impulse.ar(modFreq);
             var timer = Sweep.ar(trig);
-
-            // 1. Calculate rate at .kr, multiply at .ar
             var windowRate = modFreq / modOverlap;
             var envPhase = timer * windowRate;
             var window = sin(envPhase * pi) * (envPhase < 1.0);
 
-            // 2. Multiply by SampleDur.ir instead of dividing by SampleRate.ir
-            // 3. Multiply by 0.15915 (1/2pi) instead of dividing by (2*pi)
-            var p = (Phasor.ar(trig, modFormant * SampleDur.ir, 0, 1) + (phaseOffset * 0.15915)) % 1.0;
+            var p = (Phasor.ar(trig, modFormant * SampleDur.ir, 0, 1) + ((phaseOffset + (c_EnvPhs * envKr)) * 0.15915)) % 1.0;
             var wSin = sin(p * 2 * pi);
             var wTri = (4 * ((p + 0.25) % 1.0 - 0.5).abs) - 1;
             var wSqr = (p < modPwm) * 2 - 1;
@@ -93,26 +89,21 @@ Engine_Magnetar : CroneEngine {
             var baseOsc = SelectX.ar(modShape, [wSin, wTri, wSqr]);
             var exciterGrain = baseOsc * window;
 
-            // Tracking times are evaluated at .kr so division is completely fine here
             var trackFundTime = 1.0 / modFreq;
             var trackFormTime = 1.0 / modFormant;
             var baseFbTime = Select.kr(fbTrackMode, [fbTime, trackFundTime, trackFormTime]);
 
-            var modFbTime = (baseFbTime * (1 + (modLfoFbTime * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
-            var modFbDamp = (fbDamp + (modLfoFbDamp * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
+            var modFbTime = (baseFbTime * (1 + (modLfoFbTime.cubed * lfo) + (modVelFbTime * vel) + (mwFbTime * modWheel))).clip(0.0001, 0.5);
+            var modFbDamp = (fbDamp + (modLfoFbDamp.cubed * lfo) + (modVelFbDamp * vel) + (mwFbDamp * modWheel)).clip(0.0, 0.99);
 
             var ringTime = (fbAmt * 5.0).clip(0.0, 5.0);
-
             var combOut = CombL.ar(exciterGrain, 0.5, modFbTime, ringTime);
             var filteredComb = OnePole.ar(combOut, modFbDamp);
-
             var resonated = (exciterGrain + (filteredComb * fbAmt)).softclip;
 
-            // Use multiplication ( * 0.5 ) instead of division ( / 2.0 ) wherever possible
             var fbComp = 1.0 / (1.0 + fbAmt);
             var dynAmp = 1.0 - velAmp + (vel * velAmp);
-
-            var snd = resonated * amp * fbComp * dynAmp * envAr * (1 + (modLfoAmp * lfo));
+            var snd = resonated * amp * fbComp * dynAmp * envAr * (1 + (modLfoAmp.cubed * lfo));
 
             Out.ar(out, Pan2.ar(snd, pan));
         }).add;
@@ -129,6 +120,11 @@ Engine_Magnetar : CroneEngine {
         this.addCommand(\noteOff, "i", { arg msg;
             var id = msg[1];
             if(synths.at(id).notNil) { synths[id].set(\gate, 0); synths.removeAt(id); };
+        });
+
+        this.addCommand(\setVoiceFreq, "if", { arg msg;
+            var id = msg[1]; var hz = msg[2];
+            if(synths.at(id).notNil) { synths[id].set(\freq, hz); };
         });
 
         this.addCommand(\setParam, "sf", { arg msg;

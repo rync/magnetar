@@ -4,24 +4,25 @@
 engine.name = 'Magnetar'
 local MusicUtil = require("musicutil")
 
-local MAX_VOICES = 6
+local MAX_VOICES = 12
 local active_notes = {}
 local note_order = {}
 local voices_active = 0
 local ui_time = 0
 
--- UI Navigation State
-local current_page = 0 -- 0 = Main Animation Page, 1+ = Full Parameter Menus
-local menu_page = 1    -- Tracks which parameter menu page is active in the background
+local current_page = 0
+local menu_page = 1
 local selected_param = 1
 local k1_held = false
 
--- Animation State
 local anim_notes = {}
-local stars = {} -- Holds our fixed background starfield positions
+local stars = {}
 
 local pages = {
   { name = "Oscillator", params = {
+      {id="voiceMode",    disp="Voice Mode"},
+      {id="voiceSpread",  disp="Unison Spread"},
+      {id="glide",        disp="Glide Time"},
       {id="shape",        disp="Wave Shape"},
       {id="pwm",          disp="Pulse Width"},
       {id="formantRatio", disp="Formant Ratio"},
@@ -66,9 +67,6 @@ local pages = {
       {id="modVelFormant", disp="->Formant"},
       {id="modVelOverlap", disp="->Overlap"},
       {id="modVelShape",   disp="->OSC Wave Shape"},
-      {id="velLfoFormant", disp="LFO -> Formant"},
-      {id="velLfoOverlap", disp="LFO -> Overlap"},
-      {id="velLfoShape",   disp="LFO -> OSC Wave Shape"},
       {id="modVelFbTime",  disp="->Feedback Time"},
       {id="modVelFbDamp",  disp="->Feedback Dampening"},
     }
@@ -77,9 +75,6 @@ local pages = {
       {id="mwFormant",    disp=">Formant"},
       {id="mwOverlap",    disp=">Overlap"},
       {id="mwShape",      disp=">OSC Wave Shape"},
-      {id="mwLfoFormant", disp="LFO -> Formant"},
-      {id="mwLfoOverlap", disp="LFO -> Overlap"},
-      {id="mwLfoShape",   disp="LFO -> OSC Wave Shape"},
       {id="mwFbTime",     disp="->Feedback Time"},
       {id="mwFbDamp",     disp="->Feedback Dampening"}
     }
@@ -90,19 +85,17 @@ local ratio_values = {0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 
 local ratio_labels = {"1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 
 function init_stars()
-  -- Helper function to ensure stars don't clump together
   local function get_valid_pos()
     local valid = false
     local rx, ry
     local attempts = 0
-    local min_dist = 9 -- Minimum pixels between any two stars
+    local min_dist = 9
 
     while not valid and attempts < 100 do
-      rx = math.random(50, 127)
-      ry = math.random(0, 64)
+      rx = math.random(0, 127)
+      ry = math.random(15, 50)
       valid = true
 
-      -- Check distance against all existing stars
       for _, star in ipairs(stars) do
         local dx = rx - star.x
         local dy = ry - star.y
@@ -118,28 +111,15 @@ function init_stars()
     return rx, ry
   end
 
-  -- Exactly 12 Voice Stars (2 per voice slot)
   for i=1, 12 do
     local sx, sy = get_valid_pos()
-    table.insert(stars, {
-      x = sx,
-      y = sy,
-      type = 1,
-      v_idx = (i % MAX_VOICES) + 1
-    })
+    table.insert(stars, { x = sx, y = sy, type = 1, v_idx = (i % MAX_VOICES) + 1 })
   end
 
-  -- Exactly 10 LFO Stars (2 per threshold)
   local thresholds = {-1.0, -0.5, 0.0, 0.5, 1.0}
   for i=1, 10 do
     local sx, sy = get_valid_pos()
-    table.insert(stars, {
-      x = sx,
-      y = sy,
-      type = 2,
-      lfo_val = thresholds[(i % 5) + 1],
-      bright = 0
-    })
+    table.insert(stars, { x = sx, y = sy, type = 2, lfo_val = thresholds[(i % 5) + 1], bright = 0 })
   end
 end
 
@@ -153,7 +133,6 @@ function init()
       clock.sleep(1/15)
       ui_time = ui_time + (1/15)
 
-      -- Update visual animation envelopes
       local atk_rate = 1.0 / math.max(0.01, params:get("atk") * 15)
       local rel_rate = 1.0 / math.max(0.01, params:get("rel") * 15)
 
@@ -163,7 +142,7 @@ function init()
         else
           data.env = math.max(0.0, data.env - rel_rate)
           if data.env <= 0.01 then
-            anim_notes[note] = nil -- Clean up dead notes
+            anim_notes[note] = nil
           end
         end
       end
@@ -177,61 +156,128 @@ function setup_midi()
   m = midi.connect()
   m.event = function(data)
     local d = midi.to_msg(data)
+    local v_mode = params:get("voiceMode")
+    local spread = params:get("voiceSpread")
+
     if d.type == "note_on" then
       if active_notes[d.note] then
-        engine.noteOff(d.note)
         for i, n in ipairs(note_order) do
           if n == d.note then table.remove(note_order, i); break end
         end
-        voices_active = voices_active - 1
-      end
-
-      if voices_active >= MAX_VOICES then
-        local oldest_note = table.remove(note_order, 1)
-        engine.noteOff(oldest_note)
-        active_notes[oldest_note] = nil
-        if anim_notes[oldest_note] then anim_notes[oldest_note].state = "off" end
-        voices_active = voices_active - 1
       end
 
       local hz = MusicUtil.note_num_to_freq(d.note)
-      engine.noteOn(d.note, hz, d.vel / 127)
+      local vel = d.vel / 127
 
-      active_notes[d.note] = true
-      table.insert(note_order, d.note)
-      voices_active = voices_active + 1
+      if v_mode == 1 then
+        if #note_order >= MAX_VOICES then
+          local oldest = table.remove(note_order, 1)
+          engine.noteOff(oldest)
+          active_notes[oldest] = nil
+          if anim_notes[oldest] then anim_notes[oldest].state = "off" end
+          voices_active = voices_active - 1
+        end
 
-      -- Register note for visual animation
-      anim_notes[d.note] = {
-        freq = hz,
-        vel = d.vel / 127,
-        env = 0.0,
-        state = "on",
-        angle = math.random() * math.pi * 2,
-        dist_offset = math.random(-3, 3)
-      }
+        engine.noteOn(d.note, hz, vel)
+        active_notes[d.note] = true
+        table.insert(note_order, d.note)
+        voices_active = voices_active + 1
+        anim_notes[d.note] = { freq = hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
+
+      elseif v_mode == 2 then
+        active_notes[d.note] = true
+        table.insert(note_order, d.note)
+
+        if voices_active == 0 then
+          for i=1, MAX_VOICES do
+            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+            local v_hz = hz * (1 + detune)
+            engine.noteOn(i, v_hz, vel)
+            anim_notes[i] = { freq = v_hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
+          end
+          voices_active = MAX_VOICES
+        else
+          for i=1, MAX_VOICES do
+            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+            local v_hz = hz * (1 + detune)
+            engine.setVoiceFreq(i, v_hz)
+            if anim_notes[i] then anim_notes[i].freq = v_hz end
+          end
+        end
+
+      elseif v_mode == 3 then
+        if #note_order >= 4 then
+          local oldest = table.remove(note_order, 1)
+          active_notes[oldest] = nil
+          for i=1, 3 do
+            local id = oldest * 10 + i
+            engine.noteOff(id)
+            if anim_notes[id] then anim_notes[id].state = "off" end
+          end
+          voices_active = voices_active - 3
+        end
+
+        active_notes[d.note] = true
+        table.insert(note_order, d.note)
+
+        for i=1, 3 do
+          local detune = (i - 2) * spread * 0.05
+          local v_hz = hz * (1 + detune)
+          local id = d.note * 10 + i
+          engine.noteOn(id, v_hz, vel)
+          anim_notes[id] = { freq = v_hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
+        end
+        voices_active = voices_active + 3
+      end
 
     elseif d.type == "note_off" then
-      if active_notes[d.note] then
-        engine.noteOff(d.note)
-        active_notes[d.note] = nil
-        if anim_notes[d.note] then anim_notes[d.note].state = "off" end
+      if not active_notes[d.note] then return end
+      active_notes[d.note] = nil
 
-        for i, n in ipairs(note_order) do
-          if n == d.note then table.remove(note_order, i); break end
-        end
-        voices_active = voices_active - 1
+      for i, n in ipairs(note_order) do
+        if n == d.note then table.remove(note_order, i); break end
       end
+
+      if v_mode == 1 then
+        engine.noteOff(d.note)
+        if anim_notes[d.note] then anim_notes[d.note].state = "off" end
+        voices_active = voices_active - 1
+
+      elseif v_mode == 2 then
+        if #note_order > 0 then
+          local last_note = note_order[#note_order]
+          local hz = MusicUtil.note_num_to_freq(last_note)
+          for i=1, MAX_VOICES do
+            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+            local v_hz = hz * (1 + detune)
+            engine.setVoiceFreq(i, v_hz)
+            if anim_notes[i] then anim_notes[i].freq = v_hz end
+          end
+        else
+          for i=1, MAX_VOICES do
+            engine.noteOff(i)
+            if anim_notes[i] then anim_notes[i].state = "off" end
+          end
+          voices_active = 0
+        end
+
+      elseif v_mode == 3 then
+        for i=1, 3 do
+          local id = d.note * 10 + i
+          engine.noteOff(id)
+          if anim_notes[id] then anim_notes[id].state = "off" end
+        end
+        voices_active = voices_active - 3
+      end
+
     elseif d.type == "cc" and d.cc == 1 then
       engine.setParam("modWheel", d.val / 127)
     end
   end
 end
 
--- Controls
 function key(n, z)
   if n == 1 then k1_held = (z == 1) end
-
   if n == 3 and z == 1 then
     local target_page = current_page == 0 and menu_page or current_page
     local p_id = pages[target_page].params[selected_param].id
@@ -242,15 +288,8 @@ end
 function enc(n, delta)
   if n == 1 then
     if k1_held then
-      -- Toggle Main Page (0) vs Full Menu
-      if current_page == 0 then
-        current_page = menu_page
-      else
-        menu_page = current_page
-        current_page = 0
-      end
+      if current_page == 0 then current_page = menu_page else menu_page = current_page; current_page = 0 end
     else
-      -- E1 Scrolls Pages in BOTH modes now
       if current_page == 0 then
         menu_page = util.clamp(menu_page + delta, 1, #pages)
         selected_param = 1
@@ -268,11 +307,9 @@ function enc(n, delta)
     local target_page = current_page == 0 and menu_page or current_page
     local p_id = pages[target_page].params[selected_param].id
 
-    -- CUSTOM VELOCITY SCALING FOR LFO RATE
     if p_id == "lfoRate" then
       local current = params:get("lfoRate")
       local step = 0
-
       if math.abs(delta) == 1 then
         if current < 1.0 then step = 0.01 * delta
         elseif current < 10.0 then step = 0.1 * delta
@@ -282,7 +319,6 @@ function enc(n, delta)
         elseif current < 10.0 then step = 1.0 * delta
         else step = 5.0 * delta end
       end
-
       params:set("lfoRate", util.clamp(current + step, 0.01, 200.0))
     else
       params:delta(p_id, delta)
@@ -290,35 +326,34 @@ function enc(n, delta)
   end
 end
 
--- Screen Rendering
 function redraw()
   screen.clear()
 
-  -- Common Data
   local target_page = current_page == 0 and menu_page or current_page
   local current_p = pages[target_page].params[selected_param]
   local p_id = current_p.id
-  local p_val_str = (p_id == "formantRatio") and ratio_labels[params:get(p_id)] or params:string(p_id)
+  local p_val_str = params:string(p_id)
+
+  if p_id == "formantRatio" then p_val_str = ratio_labels[params:get(p_id)] end
+  if p_id == "voiceMode" then
+    local vm = params:get(p_id)
+    p_val_str = (vm == 1) and "Poly" or ((vm == 2) and "Mono" or "4x3")
+  end
+
   local full_p_name = params:lookup_param(p_id).name
 
   if current_page == 0 then
-    -- ==========================================
-    -- MAIN PAGE: UI LEFT, MAGNETAR RIGHT
-    -- ==========================================
-
-    -- 1. Left UI (Full Text Editing)
     screen.level(4)
-    screen.move(0, 10)
+    screen.move(0, 8)
     screen.text(pages[target_page].name .. " [" .. selected_param .. "/" .. #pages[target_page].params .. "]")
 
     screen.level(15)
-    screen.move(0, 26)
+    screen.move(0, 62)
     screen.text(full_p_name)
 
-    screen.move(0, 36)
-    screen.text(p_val_str)
+    screen.move(128, 62)
+    screen.text_right(p_val_str)
 
-    -- 2. Calculate Live LFO
     local lfo_rate = params:get("lfoRate")
     local lfo_shape_idx = params:get("lfoShape")
     local lfo_phase = (ui_time * lfo_rate) % 1.0
@@ -329,34 +364,40 @@ function redraw()
     elseif lfo_shape_idx == 3 then lfo = (lfo_phase * 2) - 1
     elseif lfo_shape_idx == 4 then lfo = lfo_phase < 0.5 and 1 or -1
     elseif lfo_shape_idx == 5 then lfo = math.sin(math.floor(ui_time * lfo_rate) * 1337.1)
-    elseif lfo_shape_idx == 6 then
-      -- Smooth random walk representation
-      lfo = math.sin(ui_time * lfo_rate * 2.1) * math.cos(ui_time * lfo_rate * 1.3)
-    elseif lfo_shape_idx == 7 then
-      -- Pure White Noise (Unfiltered random per frame)
-      lfo = (math.random() * 2 - 1)
-    end
+    elseif lfo_shape_idx == 6 then lfo = math.sin(ui_time * lfo_rate * 2.1) * math.cos(ui_time * lfo_rate * 1.3)
+    elseif lfo_shape_idx == 7 then lfo = (math.random() * 2 - 1) end
 
     lfo = lfo * (1.0 - params:get("mwLfoGlobal"))
 
-    -- Internal Visual Blink LFO for Feedback Representation
     local v_fb_time = util.clamp(params:get("fbTime"), 0.01, 0.5)
     local v_blink_rate = 1.0 / v_fb_time
     local v_blink_phase = (ui_time * v_blink_rate) % 1.0
     local v_blink_lfo = v_blink_phase < 0.5 and 1 or -1
 
-    -- 3. Draw Background Starfield
+    local v_mode = params:get("voiceMode")
+
     for _, star in ipairs(stars) do
       local display_bright = 0
-
       if star.type == 1 then
-        -- Voice Linked Star (The Twinkle)
-        local note = note_order[star.v_idx]
+        local target_idx = nil
+
+        if v_mode == 1 then
+          target_idx = note_order[star.v_idx]
+        elseif v_mode == 2 then
+          target_idx = star.v_idx
+        elseif v_mode == 3 then
+          local note_idx = math.ceil(star.v_idx / 3)
+          local base_note = note_order[note_idx]
+          if base_note then
+            local sub_idx = ((star.v_idx - 1) % 3) + 1
+            target_idx = base_note * 10 + sub_idx
+          end
+        end
+
+        local note = target_idx
         if note and anim_notes[note] then
           local base_env = anim_notes[note].env
           if anim_notes[note].state == "on" and base_env > 0.1 then
-            local blink_comp = (v_blink_lfo * params:get("fbAmt"))
-            -- Twinkle intensity is increased by fbAmt
             local twinkle = math.random() * (0.2 + (params:get("fbAmt") * 0.3))
             display_bright = math.floor(base_env * (1.0 - twinkle) * 15)
           else
@@ -365,24 +406,11 @@ function redraw()
         end
 
       elseif star.type == 2 then
-        -- LFO Linked Star (The SMOOTH Phosphor Glow)
         local dist = math.abs(lfo - star.lfo_val)
         local target_bright = 0
-
-        -- Widen the detection window slightly to catch fast LFOs
-        if dist < 0.3 then
-          target_bright = 15 * (1.0 - (dist / 0.3))
-        end
-
-        -- Exponential Interpolation for ultra-smooth fading
-        if target_bright > star.bright then
-          -- Attack: Glides up quickly
-          star.bright = star.bright + ((target_bright - star.bright) * 0.6)
-        else
-          -- Decay: Multiplies by 0.85 every frame for a long, glowing tail
-          star.bright = star.bright * 0.85
-        end
-
+        if dist < 0.3 then target_bright = 15 * (1.0 - (dist / 0.3)) end
+        if target_bright > star.bright then star.bright = star.bright + ((target_bright - star.bright) * 0.6)
+        else star.bright = star.bright * 0.85 end
         if star.bright < 0.1 then star.bright = 0 end
         display_bright = math.floor(star.bright)
       end
@@ -393,8 +421,7 @@ function redraw()
       end
     end
 
-    -- 4. Draw Magnetar Core & Plumes
-    local cx, cy = 94, 32
+    local cx, cy = 64, 32
     local spread = params:get("panSpread")
 
     local plume_bright = math.max(0, math.floor(spread * 8))
@@ -412,12 +439,10 @@ function redraw()
       end
     end
 
-    -- Core
     screen.level(15)
     screen.circle(cx, cy, 2 + math.floor(voices_active/2))
     screen.fill()
 
-    -- 5. Draw Orbiting Voice Particles
     local orbit_width = 8 + (ratio_values[params:get("formantRatio")] * 2)
     local orbit_height = 2 + (params:get("overlap") * 15)
     local orbit_tilt = params:get("shape") * (math.pi / 2.5)
@@ -443,9 +468,6 @@ function redraw()
     end
 
   else
-    -- ==========================================
-    -- PARAMETER MENUS (FULL PAGE)
-    -- ==========================================
     screen.level(15)
     screen.move(0, 10)
     screen.text(pages[current_page].name .. "   [V:" .. voices_active .. "]")
@@ -475,7 +497,12 @@ function redraw()
       screen.move(8, y)
       screen.text(p.disp)
 
-      local v_str = (p.id == "formantRatio") and ratio_labels[params:get(p.id)] or params:string(p.id)
+      local v_str = params:string(p.id)
+      if p.id == "formantRatio" then v_str = ratio_labels[params:get(p.id)] end
+      if p.id == "voiceMode" then
+        local vm = params:get(p.id)
+        v_str = (vm == 1) and "Poly" or ((vm == 2) and "Mono" or "4x3")
+      end
       screen.move(128, y)
       screen.text_right(v_str)
     end
@@ -492,11 +519,25 @@ function build_params()
     params:set_action(id, function(v) engine.setParam(id, v) end)
   end
 
-  params:add_group("Oscillator", 6)
-  params:add_option("formantRatio", "Formant Ratio", ratio_labels, 4)
-  params:set_action("formantRatio", function(v)
-    engine.setParam("formantRatio", ratio_values[v])
+  -- CAREFULLY COUNTED: 8 parameters in this group
+  params:add_group("Oscillator", 8)
+
+  params:add_option("voiceMode", "Voice Mode", {"Poly", "Mono Unison", "4x3 Unison"}, 1)
+  params:set_action("voiceMode", function()
+    for i=0, 127 do engine.noteOff(i) end
+    for i=1, MAX_VOICES do engine.noteOff(i) end
+    for n=0, 127 do
+      for i=1, 3 do engine.noteOff(n*10+i) end
+    end
+    voices_active = 0
+    anim_notes = {}
+    note_order = {}
   end)
+  add_eng_param("voiceSpread", "Unison Spread", 0.0, 1.0, 0.1)
+  add_eng_param("glide", "Glide Time", 0.0, 5.0, 0.0)
+
+  params:add_option("formantRatio", "Formant Ratio", ratio_labels, 4)
+  params:set_action("formantRatio", function(v) engine.setParam("formantRatio", ratio_values[v]) end)
   add_eng_param("formantFine", "Formant Fine", 0.25, 1.75, 1.0)
   add_eng_param("overlap", "Overlap (PulWM)", 0.01, 1.6, 0.03)
   add_eng_param("phaseOffset", "Phase Offset", 0.0, 6.28, 0.0)
@@ -513,6 +554,7 @@ function build_params()
   params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
   params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
+  -- CAREFULLY COUNTED: 6 parameters in this group
   params:add_group("Mod: Feedback", 6)
   add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
   add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
@@ -527,19 +569,20 @@ function build_params()
   add_eng_param("sus", "Sustain", 0.0, 1.0, 0.4)
   add_eng_param("rel", "Release", 0.001, 10.0, 0.2)
 
-  params:add_group("LFO Base", 5)
+  params:add_group("LFO Base", 3)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "White"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 450.0, 0.8)
-  add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
-  add_eng_param("mwLfoGlobal", "ModWheel -> LFO Scale", 0.0, 1.0, 0.0)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 520.0, 0.8)
+  add_eng_param("mwLfoGlobal", "ModWheel LFO Depth", 0.0, 1.0, 0.0)
 
-  params:add_group("Mod: LFO", 5)
+  -- CAREFULLY COUNTED: 6 parameters in this group
+  params:add_group("Mod: LFO", 6)
   add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("modLfoOverlap", "LFO -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("modLfoShape", "LFO -> Shape", -2.0, 2.0, 0.0)
   add_eng_param("modLfoPwm", "LFO -> PWM", -1.0, 1.0, 0.0)
   add_eng_param("modLfoAmp", "LFO -> Amp", 0.0, 1.0, 0.0)
+  add_eng_param("modLfoFreq", "LFO -> Freq", -1.0, 1.0, 0.0)
 
   params:add_group("Mod: Envelope", 5)
   add_eng_param("modEnvFormant", "Env -> Formant", -2.0, 2.0, 0.0)
@@ -554,20 +597,10 @@ function build_params()
   add_eng_param("modVelOverlap", "Vel -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("modVelShape", "Vel -> Shape", -2.0, 2.0, 0.0)
 
-  params:add_group("Mod: Velocity -> LFO", 3)
-  add_eng_param("velLfoFormant", "Vel scales Form LFO", -2.0, 2.0, 0.0)
-  add_eng_param("velLfoOverlap", "Vel scales OvrLp LFO", -1.0, 1.0, 0.0)
-  add_eng_param("velLfoShape", "Vel scales Shape LFO", -2.0, 2.0, 0.0)
-
   params:add_group("Mod: Mod Wheel Direct", 3)
   add_eng_param("mwFormant", "Wheel -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("mwOverlap", "Wheel -> Overlap", -1.0, 1.0, 0.0)
   add_eng_param("mwShape", "Wheel -> Shape", -2.0, 2.0, 0.0)
-
-  params:add_group("Mod: Mod Wheel -> LFO", 3)
-  add_eng_param("mwLfoFormant", "Wheel scales Form LFO", -2.0, 2.0, 0.0)
-  add_eng_param("mwLfoOverlap", "Wheel scales OvrLp LFO", -1.0, 1.0, 0.0)
-  add_eng_param("mwLfoShape", "Wheel scales Shape LFO", -2.0, 2.0, 0.0)
 
   params:bang()
 end
