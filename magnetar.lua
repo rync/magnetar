@@ -33,10 +33,13 @@ local pages = {
       {id="formantFine",  disp="Formant Fine"},
       {id="overlap",      disp="Wavelet Overlap"},
       {id="phaseOffset",  disp="Phase Offset"},
-      {id="fbAmt",        disp="Feedback Amount"},
-      {id="fbTime",       disp="Feedback Time"},
-      {id="fbDamp",       disp="Feedback Dampen"},
-      {id="fbTrackMode",  disp="Feedback Tracking"}
+    }
+  },
+  { name = "Comb Filter Feedback", params = {
+      {id="fbTrackMode",  disp="Tracking"},
+      {id="fbAmt",        disp="Amount"},
+      {id="fbTime",       disp="Time"},
+      {id="fbDamp",       disp="Dampening"}
     }
   },
   { name = "Envelope", params = {
