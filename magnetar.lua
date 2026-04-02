@@ -72,9 +72,9 @@ local pages = {
     }
   },
   { name = "Modwheel", params = {
-      {id="mwFormant",    disp=">Formant"},
-      {id="mwOverlap",    disp=">Overlap"},
-      {id="mwShape",      disp=">OSC Wave Shape"},
+      {id="mwFormant",    disp="->Formant"},
+      {id="mwOverlap",    disp="->Overlap"},
+      {id="mwShape",      disp="->OSC Wave Shape"},
       {id="mwFbTime",     disp="->Feedback Time"},
       {id="mwFbDamp",     disp="->Feedback Dampening"}
     }
@@ -185,20 +185,21 @@ function setup_midi()
         anim_notes[d.note] = { freq = hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
 
       elseif v_mode == 2 then
+        local mono_voices = 8
         active_notes[d.note] = true
         table.insert(note_order, d.note)
 
         if voices_active == 0 then
-          for i=1, MAX_VOICES do
-            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+          for i=1, mono_voices do
+            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
             local v_hz = hz * (1 + detune)
             engine.noteOn(i, v_hz, vel)
             anim_notes[i] = { freq = v_hz, vel = vel, env = 0, state = "on", angle = math.random() * math.pi * 2, dist_offset = math.random(-3,3) }
           end
-          voices_active = MAX_VOICES
+          voices_active = mono_voices
         else
-          for i=1, MAX_VOICES do
-            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+          for i=1, mono_voices do
+            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
             local v_hz = hz * (1 + detune)
             engine.setVoiceFreq(i, v_hz)
             if anim_notes[i] then anim_notes[i].freq = v_hz end
@@ -244,17 +245,18 @@ function setup_midi()
         voices_active = voices_active - 1
 
       elseif v_mode == 2 then
+        local mono_voices = 8
         if #note_order > 0 then
           local last_note = note_order[#note_order]
           local hz = MusicUtil.note_num_to_freq(last_note)
-          for i=1, MAX_VOICES do
-            local detune = (i - (MAX_VOICES/2 + 0.5)) * spread * 0.05
+          for i=1, mono_voices do
+            local detune = (i - (mono_voices/2 + 0.5)) * spread * 0.05
             local v_hz = hz * (1 + detune)
             engine.setVoiceFreq(i, v_hz)
             if anim_notes[i] then anim_notes[i].freq = v_hz end
           end
         else
-          for i=1, MAX_VOICES do
+          for i=1, mono_voices do
             engine.noteOff(i)
             if anim_notes[i] then anim_notes[i].state = "off" end
           end
@@ -326,6 +328,13 @@ function enc(n, delta)
   end
 end
 
+local function is_param_disabled(id)
+  if id == "fbTime" and params:get("fbTrackMode") ~= 1 then return true end
+  if (id == "voiceSpread" or id == "glide") and params:get("voiceMode") == 1 then return true end
+  if id == "lfoRate" and params:get("lfoShape") == 7 then return true end
+  return false
+end
+
 function redraw()
   screen.clear()
 
@@ -341,13 +350,25 @@ function redraw()
   end
 
   local full_p_name = params:lookup_param(p_id).name
+  local is_disabled = is_param_disabled(p_id)
 
   if current_page == 0 then
+    -- ==========================================
+    -- MAIN PAGE (CORNERS)
+    -- ==========================================
+
     screen.level(4)
     screen.move(0, 8)
     screen.text(pages[target_page].name .. " [" .. selected_param .. "/" .. #pages[target_page].params .. "]")
 
-    screen.level(15)
+    -- Draw Background Shading if Disabled
+    if is_disabled then
+      screen.level(1) -- Very dark, subtle gray
+      screen.rect(0, 54, 128, 10) -- Box behind the bottom row
+      screen.fill()
+    end
+
+    screen.level(is_disabled and 4 or 15)
     screen.move(0, 62)
     screen.text(full_p_name)
 
@@ -468,6 +489,9 @@ function redraw()
     end
 
   else
+    -- ==========================================
+    -- FULL MENU PAGE
+    -- ==========================================
     screen.level(15)
     screen.move(0, 10)
     screen.text(pages[current_page].name .. "   [V:" .. voices_active .. "]")
@@ -485,13 +509,21 @@ function redraw()
     for i = start_idx, end_idx do
       local p = pages[current_page].params[i]
       local y = 26 + (i - start_idx) * 9
+      local is_list_item_disabled = is_param_disabled(p.id)
+
+      -- Draw Background Box for disabled list items
+      if is_list_item_disabled then
+        screen.level(1)
+        screen.rect(0, y - 7, 128, 9)
+        screen.fill()
+      end
 
       if i == selected_param then
-        screen.level(15)
+        screen.level(is_list_item_disabled and 4 or 15)
         screen.move(0, y)
         screen.text(">")
       else
-        screen.level(4)
+        screen.level(is_list_item_disabled and 3 or 4)
       end
 
       screen.move(8, y)
@@ -519,7 +551,6 @@ function build_params()
     params:set_action(id, function(v) engine.setParam(id, v) end)
   end
 
-  -- CAREFULLY COUNTED: 8 parameters in this group
   params:add_group("Oscillator", 8)
 
   params:add_option("voiceMode", "Voice Mode", {"Poly", "Mono Unison", "4x3 Unison"}, 1)
@@ -554,7 +585,6 @@ function build_params()
   params:add_option("fbTrackMode", "FB Track Mode", {"Free", "Fundamental", "Formant"}, 1)
   params:set_action("fbTrackMode", function(v) engine.setParam("fbTrackMode", v - 1) end)
 
-  -- CAREFULLY COUNTED: 6 parameters in this group
   params:add_group("Mod: Feedback", 6)
   add_eng_param("modLfoFbTime", "LFO -> FB Time", -1.0, 1.0, 0.0)
   add_eng_param("modLfoFbDamp", "LFO -> FB Damp", -1.0, 1.0, 0.0)
@@ -572,10 +602,9 @@ function build_params()
   params:add_group("LFO Base", 3)
   params:add_option("lfoShape", "LFO Shape", {"Sine", "Tri", "Saw", "Square", "S&H", "Smooth", "White"}, 1)
   params:set_action("lfoShape", function(v) engine.setParam("lfoShape", v - 1) end)
-  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 520.0, 0.8)
+  add_eng_param("lfoRate", "LFO Rate Hz", 0.01, 200.0, 0.8)
   add_eng_param("mwLfoGlobal", "ModWheel LFO Depth", 0.0, 1.0, 0.0)
 
-  -- CAREFULLY COUNTED: 6 parameters in this group
   params:add_group("Mod: LFO", 6)
   add_eng_param("modLfoFormant", "LFO -> Formant", -2.0, 2.0, 0.0)
   add_eng_param("modLfoOverlap", "LFO -> Overlap", -1.0, 1.0, 0.0)
